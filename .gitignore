@@ -1,0 +1,19 @@
+# Local backups and run output
+*.bak
+*.log
+.playwright-mcp/
+.claude-ping-test-*/
+.ping-test-*/
+.install-test-*/
+
+# Local authentication and configuration
+/AGENTS.md
+.env
+.env.*
+!.env.example
+auth.json
+credentials.json
+.credentials.json
+.codex/
+.claude/
+.claude-*-backup/

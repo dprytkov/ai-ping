@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="320" viewBox="0 0 1280 320" role="img" aria-labelledby="title desc">
+  <title id="title">AI Ping — Claude Code and Codex</title>
+  <desc id="desc">Windows command-line utilities for minimal requests, token statistics, and quota reset times. The terminal shows sample output.</desc>
+  <defs>
+    <linearGradient id="background" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#101820"/>
+      <stop offset="1" stop-color="#0d1117"/>
+    </linearGradient>
+  </defs>
+  <rect x="1" y="1" width="1278" height="318" rx="20" fill="url(#background)" stroke="#30363d"/>
+  <path d="M40 44H1240" stroke="#30363d"/>
+  <text x="46" y="31" fill="#8b949e" font-family="Consolas, monospace" font-size="13" letter-spacing="3">WINDOWS / COMMAND LINE</text>
+  <text x="1238" y="31" text-anchor="end" fill="#79c0ff" font-family="Consolas, monospace" font-size="13">5h + 7d</text>
+
+  <rect x="46" y="94" width="66" height="66" rx="16" fill="#172b3a" stroke="#31536d"/>
+  <path d="M63 112L78 127L63 142M82 144H98" fill="none" stroke="#79c0ff" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="138" y="150" fill="#f0f6fc" font-family="Segoe UI, Arial, sans-serif" font-size="72" font-weight="700" letter-spacing="-3">AI PING</text>
+  <text x="48" y="197" fill="#c9d1d9" font-family="Segoe UI, Arial, sans-serif" font-size="25">Claude Code + Codex</text>
+
+  <g font-family="Consolas, monospace" font-size="13" letter-spacing="1">
+    <rect x="46" y="236" width="114" height="32" rx="7" fill="#172b3a" stroke="#31536d"/>
+    <text x="103" y="257" text-anchor="middle" fill="#79c0ff">TOKENS</text>
+    <rect x="172" y="236" width="114" height="32" rx="7" fill="#25241b" stroke="#51452e"/>
+    <text x="229" y="257" text-anchor="middle" fill="#ffa657">LIMITS</text>
+    <rect x="298" y="236" width="160" height="32" rx="7" fill="#142921" stroke="#2d5141"/>
+    <text x="378" y="257" text-anchor="middle" fill="#7ee787">RESET TIMES</text>
+  </g>
+
+  <rect x="690" y="72" width="548" height="206" rx="12" fill="#090d12" stroke="#30363d"/>
+  <path d="M691 108H1237" stroke="#30363d"/>
+  <circle cx="712" cy="91" r="4" fill="#f85149"/>
+  <circle cx="728" cy="91" r="4" fill="#d29922"/>
+  <circle cx="744" cy="91" r="4" fill="#3fb950"/>
+  <text x="1217" y="96" text-anchor="end" fill="#8b949e" font-family="Consolas, monospace" font-size="12">sample</text>
+  <g font-family="Consolas, monospace" font-size="18">
+    <text x="714" y="141" fill="#f0f6fc"><tspan fill="#79c0ff">&gt; </tspan>claude-ping</text>
+    <text x="714" y="171" fill="#7ee787">OK <tspan fill="#8b949e">model=haiku</tspan></text>
+    <text x="714" y="201" fill="#c9d1d9">tokens <tspan fill="#79c0ff">total=384</tspan></text>
+    <text x="714" y="231" fill="#c9d1d9">5-hour <tspan fill="#7ee787">remaining=82%</tspan></text>
+    <text x="714" y="261" fill="#c9d1d9">weekly <tspan fill="#7ee787">remaining=74%</tspan></text>
+  </g>
+</svg>
