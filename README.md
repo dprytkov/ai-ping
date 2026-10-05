@@ -1,8 +1,9 @@
 ![AI Ping — Claude Code + Codex](assets/readme-banner.svg)
 
 <p align="center">
-  <a href="#requirements"><img alt="Windows" src="https://img.shields.io/badge/platform-Windows-0078D4?style=flat-square" /></a>
-  <a href="#requirements"><img alt="Windows PowerShell 5.1" src="https://img.shields.io/badge/PowerShell-5.1-5391FE?style=flat-square" /></a>
+  <a href="#windows-requirements"><img alt="Windows" src="https://img.shields.io/badge/platform-Windows-0078D4?style=flat-square" /></a>
+  <a href="#ubuntu"><img alt="Ubuntu" src="https://img.shields.io/badge/platform-Ubuntu-E95420?style=flat-square" /></a>
+  <a href="#windows-requirements"><img alt="Windows PowerShell 5.1" src="https://img.shields.io/badge/PowerShell-5.1-5391FE?style=flat-square" /></a>
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-2ea44f?style=flat-square" /></a>
 </p>
 
@@ -10,11 +11,11 @@
 
 # AI Ping
 
-**Minimal requests to Claude Code and Codex on Windows — with the current account, token usage, and quota reset times.**
+**Minimal requests to Claude Code and Codex on Windows and Ubuntu — with the current account, token usage, and quota reset times.**
 
-AI Ping checks subscription access with short model requests and shows the current account email, request token counts, remaining 5-hour and weekly quotas, and server reset countdowns. Run it manually or through Windows Task Scheduler to start an inactive usage window ahead of work.
+AI Ping checks subscription access with short model requests and shows the current account email, request token counts, remaining 5-hour and weekly quotas, and server reset countdowns. Run it manually, through Windows Task Scheduler, or through Ubuntu cron to start an inactive usage window ahead of work.
 
-[Quick start](#quick-start) · [Usage](#usage) · [Example output](#example-output) · [Scheduling](#scheduling) · [License](#license)
+[Quick start](#quick-start) · [Ubuntu](#ubuntu) · [Usage](#usage) · [Example output](#example-output) · [Scheduling](#scheduling) · [License](#license)
 
 ## Quick start
 
@@ -60,14 +61,49 @@ To inspect the internet installer first, review [install.bat](install.bat). The 
 
 </details>
 
-## Requirements
+## Ubuntu
+
+Install Python 3, cron, and the selected provider's CLI; sign in as the user who will run the scheduled pings. The scripts use Python's standard library, with no pip packages or jq.
+
+```bash
+sudo apt update
+sudo apt install python3 cron util-linux curl tar
+sudo systemctl enable --now cron
+```
+
+From a clone or extracted archive, run setup **without sudo**:
+
+```bash
+bash ai-ping-setup.sh --start 08:00 --provider both
+```
+
+Without options, setup asks for the first daily time and `both`, `claude`, or `codex` (defaults: `08:00`, `both`). Noninteractive runs use these defaults. `08:00` creates daily runs at **08:00, 13:00, 18:00, 23:00** in Ubuntu's local time zone. `07:30` creates **07:30, 12:30, 17:30, 22:30**. Runs never start after 23:00; an existing request may finish later. A missed run while the machine is off is skipped.
+
+The internet launcher downloads and extracts the repository before calling the same setup:
+
+```bash
+curl --fail --location --proto '=https' --tlsv1.2 --output /tmp/ai-ping-install.sh https://raw.githubusercontent.com/dprytkov/ai-ping/main/install.sh && bash /tmp/ai-ping-install.sh --start 08:00 --provider both
+```
+
+Setup installs `claude-ping`, `codex-ping`, the shared `ai-ping.py`, and `ai-ping-run` into `~/.local/bin`, plus `ai-ping-LICENSE.txt`. It adds a guarded PATH block to `.profile` and `.bashrc`; open a new Bash terminal afterward. Repeat setup to change the schedule or update scripts. It replaces only its marked block in your crontab, preserves other jobs, and sends no model requests during installation.
+
+```bash
+claude-ping sonnet
+codex-ping gpt-5.6-sol
+crontab -l
+tail -n 40 ~/.local/state/ai-ping/ai-ping.log
+```
+
+Scheduled models can be set with `--claude-model sonnet --codex-model gpt-5.6-sol`. The runner records your installation-time PATH, `CLAUDE_CONFIG_DIR`, and `CODEX_HOME` if set, uses the same user's credentials, and prevents overlapping scheduled runs. Both providers are attempted even if one fails. It runs while signed out as long as cron and the machine are running. Logs may contain your account email. Use `crontab -e` and remove the `# BEGIN AI-PING` / `# END AI-PING` block to stop scheduling. [Detailed Ubuntu instructions](ai-ping.md#ubuntu).
+
+## Windows requirements
 
 - Windows with **Windows PowerShell 5.1** and an internet connection.
 - `curl.exe` and `tar.exe` on `PATH` for the internet installer.
 - The relevant CLI, signed in with a subscription account that supports your chosen model.
 - Claude Code with `--safe-mode` and `--effort` support; tested with version **2.1.289**.
 
-**Sign in:** run `claude` and use `/login`, or run `codex login`. The installer does not install the CLIs, sign you in, or create scheduled tasks.
+**Sign in:** run `claude` and use `/login`, or run `codex login`. Installers do not install the CLIs or sign you in. The Windows installer does not create scheduled tasks; Ubuntu setup creates the cron schedule described above.
 
 ## Usage
 
@@ -114,7 +150,7 @@ Illustrative Claude output:
 | `login` | Current provider account email; `unavailable` if identity metadata is missing |
 | `TOKENS` | Token counts for this ping, including cache statistics |
 | `used` / `remaining` | Account quota percentages, not exact remaining token counts |
-| `resets` | Server reset time in the Windows local time zone |
+| `resets` | Server reset time in the machine's local time zone |
 | `in` | Countdown in days and `HH:MM:SS` |
 | `n/a` / `unknown` | The service did not return a value |
 
@@ -145,7 +181,7 @@ Use `codex-ping` in the task name and script path for Codex. [The detailed Russi
 | Quota warning | Check the connection and subscription sign-in |
 | Antivirus warning | Keep protection enabled; review the files and detection instead of adding exclusions |
 
-The internet installer saves files to disk before running local setup. The local scripts use PowerShell. Authentication files stay in your user profile; backups, credentials, and temporary test profiles are excluded from Git.
+The internet installers save files to disk before running local setup. Windows scripts use PowerShell; Ubuntu scripts use Bash and Python 3. Authentication files stay in your user profile; backups, credentials, and temporary test profiles are excluded from Git. On Ubuntu, Codex reads `CODEX_HOME/auth.json` (default `~/.codex/auth.json`); Claude reads `CLAUDE_CONFIG_DIR/.credentials.json` (default `~/.claude/.credentials.json`). Codex's direct request requires file-based ChatGPT authentication.
 
 ## Development
 
@@ -155,6 +191,13 @@ There is no build step. Offline checks use mocked CLIs, HTTP responses, ZIP fixt
 powershell -NoProfile -ExecutionPolicy Bypass -File .\test-claude-ping.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\test-codex-ping.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\test-install.ps1
+```
+
+Ubuntu checks use isolated homes, mocked crontab/CLI commands, local archives, and HTTP fixtures:
+
+```bash
+python3 test-ubuntu.py
+bash test-ubuntu.sh
 ```
 
 [Report a problem](https://github.com/dprytkov/ai-ping/issues) with the command, Windows/CLI versions, and sanitized output. Redact your login email before sharing logs.

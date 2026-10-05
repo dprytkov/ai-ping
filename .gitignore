@@ -5,6 +5,8 @@
 .claude-ping-test-*/
 .ping-test-*/
 .install-test-*/
+.ubuntu-test-*/
+__pycache__/
 
 # Local authentication and configuration
 /AGENTS.md
