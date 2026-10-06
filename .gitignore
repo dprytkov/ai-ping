@@ -16,6 +16,7 @@ __pycache__/
 auth.json
 credentials.json
 .credentials.json
+**/ai-ping/credentials/
 .codex/
 .claude/
 .claude-*-backup/

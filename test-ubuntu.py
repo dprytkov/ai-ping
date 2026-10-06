@@ -11,6 +11,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 import urllib.error
@@ -33,6 +34,12 @@ class PingTests(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory(prefix=".ubuntu-test-", dir=ROOT)
         self.addCleanup(self.temporary.cleanup)
         self.directory = Path(self.temporary.name)
+        home = patch.object(ping.Path, "home", return_value=self.directory)
+        home.start()
+        self.addCleanup(home.stop)
+        clis = patch.object(ping.shutil, "which", return_value="offline-cli")
+        clis.start()
+        self.addCleanup(clis.stop)
         self.environment = patch.dict(os.environ, {
             "CLAUDE_CONFIG_DIR": str(self.directory / "claude"),
             "CODEX_HOME": str(self.directory / "codex"),
@@ -227,6 +234,235 @@ class PingTests(unittest.TestCase):
                 patch.object(ping.shutil, "which", return_value="offline-cli"), \
                 patch.object(ping.subprocess, "run", side_effect=run):
             self.assertEqual(ping.run_cli(["codex", "exec"]), "offline output")
+
+    def test_import_prompts_copy_instructions_and_private_storage(self):
+        native = {name: ping.auth_path(name).read_bytes() for name in ("claude", "codex")}
+        claude = {"claudeAiOauth": {"accessToken": "offline-claude-secret", "refreshToken": "discard-refresh"}}
+        codex = {"tokens": {"access_token": "offline-codex-secret", "account_id": "offline-account",
+                            "id_token": "x.e30.x", "refresh_token": "discard-refresh"}, "OPENAI_API_KEY": "discard-key"}
+        output = io.StringIO()
+        with patch.object(ping.shutil, "which", return_value=None), \
+                patch.object(ping.sys.stdin, "isatty", return_value=True), \
+                patch.object(ping.getpass, "getpass", side_effect=[json.dumps(claude), json.dumps(codex)]) as prompt, \
+                patch.object(ping, "request") as http, patch.object(ping, "run_cli") as cli, \
+                contextlib.redirect_stdout(output):
+            self.assertEqual(ping.main(["--setup-auth", "both"]), 0)
+            for name in ("claude", "codex"):
+                self.assertEqual(ping.auth_path(name), ping.imported_auth_path(name))
+                saved = ping.read_json(ping.auth_path(name))
+                self.assertNotIn("discard", json.dumps(saved))
+                if os.name == "posix":
+                    self.assertEqual(ping.auth_path(name).stat().st_mode & 0o777, 0o600)
+                    self.assertEqual(ping.auth_path(name).parent.stat().st_mode & 0o777, 0o700)
+            self.assertEqual(prompt.call_count, 2)
+            http.assert_not_called()
+            cli.assert_not_called()
+        for name in ("claude", "codex"):
+            self.assertEqual(ping.auth_path(name).read_bytes(), native[name])
+        text = output.getvalue()
+        for instruction in ("PowerShell", "Set-Clipboard", "Ctrl+Shift+V", "CODEX_HOME", "CLAUDE_CONFIG_DIR", "setup-token"):
+            self.assertIn(instruction, text)
+        for secret in ("offline-claude-secret", "offline-codex-secret", "discard-refresh", "discard-key"):
+            self.assertNotIn(secret, text)
+
+    def test_import_retries_invalid_input_and_replaces_only_ai_ping_copy(self):
+        self.write_auth("native-token")
+        output = io.StringIO()
+        for pasted in ('{"tokens":{"access_token":"old-token"}}', '{"access_token":"new-token"}'):
+            with patch.object(ping.shutil, "which", return_value=None), \
+                    patch.object(ping.sys.stdin, "isatty", return_value=True), \
+                    patch.object(ping.getpass, "getpass", side_effect=["invalid secret", '{"tokens":{"access_token":"sk-proj-key"}}', pasted]), \
+                    contextlib.redirect_stdout(output):
+                self.assertEqual(ping.main(["--setup-auth", "codex"]), 0)
+        self.assertEqual(ping.read_json(ping.imported_auth_path("codex")), {"tokens": {"access_token": "new-token"}})
+        self.assertEqual(ping.codex_tokens()["access_token"], "native-token")
+        self.assertNotIn("invalid secret", output.getvalue())
+        self.assertNotIn("sk-proj-key", output.getvalue())
+        for value in ({"tokens": {"access_token": "x\nAuthorization: secret"}},
+                      {"tokens": {"access_token": 42}}, {"tokens": {"access_token": "x", "account_id": []}},
+                      {"OPENAI_API_KEY": "sk-key"}, {"claudeAiOauth": {"accessToken": "sk-ant-api03-key"}}, None):
+            name = "claude" if isinstance(value, dict) and "claudeAiOauth" in value else "codex"
+            with self.assertRaises(ValueError):
+                ping.authorization_data(name, value)
+
+    def test_import_cancellation_noninteractive_and_installed_cli(self):
+        output = io.StringIO()
+        with patch.object(ping.getpass, "getpass") as prompt, contextlib.redirect_stdout(output):
+            self.assertEqual(ping.main(["--setup-auth", "both"]), 0)
+            prompt.assert_not_called()
+        with patch.object(ping.shutil, "which", return_value=None), \
+                patch.object(ping.sys.stdin, "isatty", return_value=False), \
+                patch.object(ping.getpass, "getpass") as prompt, \
+                contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
+            # Existing CLI-profile files can be used without any CLI or prompt.
+            self.assertEqual(ping.main(["--setup-auth", "both"]), 0)
+            ping.auth_path("codex").unlink()
+            self.assertEqual(ping.main(["--setup-auth", "both"]), 1)
+            self.assertIn("interactive terminal", output.getvalue())
+            prompt.assert_not_called()
+        for failure in (EOFError(), KeyboardInterrupt(), ping.getpass.GetPassWarning()):
+            with patch.object(ping.shutil, "which", return_value=None), \
+                    patch.object(ping.sys.stdin, "isatty", return_value=True), \
+                    patch.object(ping.getpass, "getpass", side_effect=['{"accessToken":"new-secret"}', failure]), \
+                    contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
+                self.assertEqual(ping.main(["--setup-auth", "both"]), 1)
+                self.assertFalse(ping.imported_auth_path("claude").exists())
+                self.assertFalse(ping.imported_auth_path("codex").exists())
+
+    def test_import_raw_claude_token_and_keep_existing(self):
+        with patch.object(ping.shutil, "which", return_value=None), \
+                patch.object(ping.sys.stdin, "isatty", return_value=True), \
+                patch.object(ping.getpass, "getpass", return_value="sk-ant-oat01-offline-secret"), \
+                contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(ping.main(["--setup-auth", "claude"]), 0)
+        saved = ping.imported_auth_path("claude").read_bytes()
+        with patch.object(ping.shutil, "which", return_value=None), \
+                patch.object(ping.sys.stdin, "isatty", return_value=True), \
+                patch.object(ping.getpass, "getpass", return_value=""), \
+                contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(ping.main(["--setup-auth", "claude"]), 0)
+        self.assertEqual(ping.imported_auth_path("claude").read_bytes(), saved)
+
+    @unittest.skipUnless(os.name == "posix", "A Linux terminal is required")
+    def test_real_installer_prompts_hide_tokens_and_save_selected_providers(self):
+        import pty
+        import select
+        import signal
+        import termios
+
+        home = self.directory / "linux profile"
+        binaries = self.directory / "bin"
+        home.mkdir()
+        binaries.mkdir()
+        cron = self.directory / "offline-crontab"
+        mock = binaries / "crontab"
+        mock.write_text('''#!/bin/bash
+if [[ $1 = -l ]]; then
+    if [[ -f $AI_PING_TEST_CRON ]]; then cat "$AI_PING_TEST_CRON"; else echo 'no crontab for offline-user' >&2; exit 1; fi
+else
+    cp -- "$1" "$AI_PING_TEST_CRON"
+fi
+''', encoding="utf-8")
+        mock.chmod(0o755)
+        environment = dict(os.environ, HOME=str(home), PATH=f"{binaries}:/usr/bin:/bin",
+                           TMPDIR=str(self.directory), AI_PING_TEST_CRON=str(cron), PYTHONDONTWRITEBYTECODE="1")
+        for name in ("SUDO_USER", "CLAUDE_CONFIG_DIR", "CODEX_HOME"):
+            environment.pop(name, None)
+        values = [("claude", {"claudeAiOauth": {"accessToken": "offline-terminal-claude-secret"}}),
+                  ("codex", {"tokens": {"access_token": "offline-terminal-codex-secret-" + "x" * 9000,
+                                        "account_id": "offline-account"}})]
+        process, terminal = pty.fork()
+        if process == 0:
+            os.execvpe("/bin/bash", ["bash", str(ROOT / "ai-ping-setup.sh"), "--start", "07:30", "--provider", "both"], environment)
+        output = b""
+        next_prompt = 0
+        deadline = time.monotonic() + 20
+        try:
+            while True:
+                self.assertLess(time.monotonic(), deadline, "Interactive installer timed out")
+                ready, _, _ = select.select([terminal], [], [], 0.2)
+                if not ready:
+                    continue
+                try:
+                    chunk = os.read(terminal, 65536)
+                except OSError:
+                    break  # Linux PTYs return EIO after the child closes them.
+                if not chunk:
+                    break
+                output += chunk
+                if next_prompt < len(values) and (values[next_prompt][0] + " authorization: ").encode() in output:
+                    self.assertFalse(termios.tcgetattr(terminal)[3] & termios.ECHO, "Token input was echoed")
+                    self.assertFalse(termios.tcgetattr(terminal)[3] & termios.ICANON, "Long tokens would be truncated")
+                    os.write(terminal, json.dumps(values[next_prompt][1]).encode() + b"\n")
+                    next_prompt += 1
+            _, status = os.waitpid(process, 0)
+            process = None
+            self.assertEqual(os.waitstatus_to_exitcode(status), 0, output.decode(errors="replace"))
+        finally:
+            os.close(terminal)
+            if process is not None:
+                try:
+                    os.kill(process, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                os.waitpid(process, 0)
+        self.assertEqual(next_prompt, 2)
+        for name, value in values:
+            path = home / ".local" / "state" / "ai-ping" / "credentials" / (name + ".json")
+            self.assertEqual(ping.read_json(path), value)
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+            for token in value.values():
+                self.assertNotIn(json.dumps(token).encode(), output)
+                self.assertNotIn(next(iter(token.values())).encode(), output)
+        self.assertIn(b"07:30 12:31 17:32 22:33", output)
+        self.assertIn("# Daily (Europe/Moscow): 07:30 12:31 17:32 22:33", cron.read_text())
+        self.assertIn("* * * * * /bin/bash", cron.read_text())
+        self.assertIn("--scheduled", cron.read_text())
+        self.assertFalse((home / ".codex").exists())
+        self.assertFalse((home / ".claude").exists())
+        self.assertFalse((home / ".local" / "state" / "ai-ping" / "ai-ping.log").exists())
+
+    def test_ping_without_clis_uses_imported_auth_and_minimal_requests(self):
+        for provider in ("claude", "codex"):
+            ping.save_authorization(provider, ping.authorization_data(provider, ping.read_json(ping.auth_path(provider))))
+            for model in (("haiku", "sonnet", "claude-haiku-4-5") if provider == "claude" else ("gpt-5.6-luna", "gpt-5.6-sol")):
+                def response(url, headers, body=None, timeout=30):
+                    self.assertEqual(headers["Authorization"], "Bearer offline-token")
+                    if body is None:
+                        return json.dumps(self.limits(provider))
+                    if provider == "codex":
+                        return self.events()
+                    self.assertEqual(url, "https://api.anthropic.com/v1/messages")
+                    self.assertIn("oauth-2025-04-20", headers["anthropic-beta"])
+                    self.assertEqual(body["model"], "claude-sonnet-5-5" if model == "sonnet" else "claude-haiku-4-5")
+                    self.assertEqual(body["tools"], [])
+                    self.assertEqual(body["thinking"], {"type": "disabled"})
+                    self.assertEqual(body["max_tokens"], 16)
+                    if model == "sonnet":
+                        self.assertEqual(body["output_config"], {"effort": "low"})
+                    self.assertEqual(body["messages"], [{"role": "user", "content": "Reply: ok"}])
+                    return json.dumps({"type": "message", "content": [{"type": "text", "text": "ok"}],
+                                       "usage": CLAUDE_USAGE, "stop_reason": "end_turn"})
+                with patch.object(ping.shutil, "which", return_value=None):
+                    code, output, _, cli = self.execute([provider, model], response)
+                self.assertEqual(code, 0)
+                self.assertIn("OK: 'ok'", output)
+                self.assertIn("5-hour", output)
+                self.assertIn("in 0d", output)
+                self.assertIn("login=unavailable" if provider == "claude" else "login=test@example.com", output)
+                cli.assert_not_called()
+
+    def test_no_cli_failures_and_expiration_show_reimport_guidance(self):
+        for provider in ("claude", "codex"):
+            with patch.object(ping.shutil, "which", return_value=None):
+                code, output, _, cli = self.execute([provider], lambda *a: (_ for _ in ()).throw(
+                    urllib.error.HTTPError("offline", 401, "secret body", {}, None)))
+            self.assertEqual(code, 1)
+            self.assertIn("HTTP 401", output)
+            self.assertIn("Windows", output)
+            self.assertIn("ai-ping-setup.sh", output)
+            self.assertNotIn("secret body", output)
+            cli.assert_not_called()
+        with patch.object(ping.shutil, "which", return_value=None):
+            for status in (403, 429, 500):
+                code, output, _, cli = self.execute(["claude"], lambda *a: (_ for _ in ()).throw(
+                    urllib.error.HTTPError("offline", status, "secret body", {}, None)))
+                self.assertEqual(code, 1)
+                self.assertIn(f"HTTP {status}", output)
+                self.assertNotIn("secret body", output)
+                cli.assert_not_called()
+            for content in ("invalid", "{}", '{"type":"error","message":"secret"}',
+                            '{"type":"message","content":[],"usage":{},"stop_reason":"end_turn"}',
+                            '{"type":"message","content":[],"usage":{},"stop_reason":"max_tokens"}'):
+                code, output, _, _ = self.execute(["claude"], lambda *a: content)
+                self.assertEqual(code, 1)
+                self.assertNotIn("secret", output)
+            ping.auth_path("claude").unlink()
+            code, output, http, cli = self.execute(["claude"])
+            self.assertEqual(code, 1)
+            self.assertIn("ai-ping-setup.sh", output)
+            http.assert_not_called()
+            cli.assert_not_called()
 
 
 if __name__ == "__main__":

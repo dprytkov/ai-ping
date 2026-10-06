@@ -4,6 +4,7 @@
 
 import base64
 import datetime as dt
+import getpass
 import json
 import math
 import os
@@ -15,6 +16,7 @@ import sys
 import tempfile
 import urllib.error
 import urllib.request
+import warnings
 
 
 class PingError(Exception):
@@ -30,9 +32,137 @@ def read_json(path):
 
 
 def auth_path(provider):
+    imported = imported_auth_path(provider)
+    if not shutil.which(provider) and imported.is_file():
+        return imported
     if provider == "claude":
         return Path(os.environ.get("CLAUDE_CONFIG_DIR", str(Path.home() / ".claude"))) / ".credentials.json"
     return Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))) / "auth.json"
+
+
+def imported_auth_path(provider):
+    return Path.home() / ".local" / "state" / "ai-ping" / "credentials" / (provider + ".json")
+
+
+def authorization_data(provider, value):
+    """Keep only fields needed for requests, never refresh tokens or API keys."""
+    key, access = ("claudeAiOauth", "accessToken") if provider == "claude" else ("tokens", "access_token")
+    tokens = value.get(key, value) if isinstance(value, dict) else None
+    if not isinstance(tokens, dict) or not isinstance(tokens.get(access), str):
+        raise ValueError("Missing access token")
+    if not re.fullmatch(r"[a-zA-Z0-9._~+/-]+=*", tokens[access]):
+        raise ValueError("Invalid access token")
+    if tokens[access].startswith("sk-") and not (provider == "claude" and tokens[access].startswith("sk-ant-oat")):
+        raise ValueError("Expected subscription authorization, not an API key")
+    fields = (access,) if provider == "claude" else (access, "account_id", "id_token")
+    kept = {access: tokens[access]}
+    for field in fields[1:]:
+        token = tokens.get(field)
+        if token not in (None, ""):
+            if not isinstance(token, str) or not re.fullmatch(r"[a-zA-Z0-9._~+/-]+=*", token):
+                raise ValueError("Invalid token field")
+            kept[field] = token
+    return {key: kept}
+
+
+def save_authorization(provider, value):
+    path = imported_auth_path(provider)
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    path.parent.chmod(0o700)
+    if os.name == "posix" and path.parent.stat().st_mode & 0o777 != 0o700:
+        raise PingError("cannot restrict credential directory permissions; use a Linux home filesystem that supports chmod")
+    # Replace atomically; an interrupted paste/write must not destroy old auth.
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent, delete=False) as target:
+            temporary = Path(target.name)
+            temporary.chmod(0o600)
+            if os.name == "posix" and temporary.stat().st_mode & 0o777 != 0o600:
+                raise PingError("cannot restrict credential file permissions; no token saved")
+            json.dump(value, target)
+            target.write("\n")
+        temporary.replace(path)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
+def read_authorization(prompt):
+    if os.name != "posix" or not os.isatty(sys.stdin.fileno()):
+        return getpass.getpass(prompt)
+    import termios
+    descriptor = sys.stdin.fileno()
+    original = termios.tcgetattr(descriptor)
+    private = original[:]
+    private[6] = original[6][:]
+    # Linux canonical input truncates lines at 4095 bytes. Codex's copied JSON
+    # can be longer; read it without canonical buffering or terminal echo.
+    private[3] &= ~(termios.ICANON | termios.ECHO)
+    private[6][termios.VMIN] = 1
+    private[6][termios.VTIME] = 0
+    try:
+        termios.tcsetattr(descriptor, termios.TCSANOW, private)
+        return getpass.getpass(prompt)
+    finally:
+        termios.tcsetattr(descriptor, termios.TCSADRAIN, original)
+
+
+def setup_authorization(provider):
+    providers = ("claude", "codex") if provider == "both" else (provider,)
+    pending = []
+    for name in providers:
+        if shutil.which(name):
+            continue
+        existing = False
+        try:
+            authorization_data(name, read_json(auth_path(name)))
+            existing = True
+        except (OSError, ValueError, TypeError):
+            pass
+        if not sys.stdin.isatty():
+            if existing:
+                continue
+            raise PingError(f"{name} CLI and authorization are missing; run setup in an interactive terminal to paste Windows credentials")
+        print(f"\n{name} is not installed on Linux. Copy authorization from your Windows computer:")
+        print("1. Open Start, type PowerShell and open it (administrator rights are not needed).")
+        if name == "claude":
+            print("2. Sign in there: run claude, enter /login, then exit Claude Code.")
+            print("3. Paste this command into PowerShell and press Enter; it copies authorization to the clipboard:")
+            print("$aiPingAuthDir = if ($env:CLAUDE_CONFIG_DIR) { $env:CLAUDE_CONFIG_DIR } else { Join-Path $env:USERPROFILE '.claude' }; Get-Content -Raw -LiteralPath (Join-Path $aiPingAuthDir '.credentials.json') | ConvertFrom-Json | ConvertTo-Json -Depth 20 -Compress | Set-Clipboard")
+            print("If the file is missing, run claude setup-token on Windows and copy the token it prints instead.")
+        else:
+            print("2. Sign in there: run codex login with your ChatGPT account.")
+            print("3. Paste this command into PowerShell and press Enter; it copies authorization to the clipboard:")
+            print("$aiPingAuthDir = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $env:USERPROFILE '.codex' }; Get-Content -Raw -LiteralPath (Join-Path $aiPingAuthDir 'auth.json') | ConvertFrom-Json | ConvertTo-Json -Depth 20 -Compress | Set-Clipboard")
+            print('If the file is missing, open .codex/config.toml in your Windows user folder with Notepad,')
+            print('add cli_auth_credentials_store = "file", then run codex login again. If CODEX_HOME is set, use that folder instead.')
+        print("4. Return to this Linux terminal, paste with Ctrl+Shift+V (or right-click) and press Enter.")
+        print("The pasted text is hidden. Ctrl+C cancels. Do not send it to anyone or paste it into a chat.")
+        if existing:
+            print("Authorization already exists. Press Enter to keep it, or paste new text to replace the AI Ping copy.")
+        while True:
+            try:
+                with warnings.catch_warnings():
+                    warnings.simplefilter("error", getpass.GetPassWarning)
+                    pasted = read_authorization(f"{name} authorization: ").strip()
+            except (EOFError, KeyboardInterrupt, getpass.GetPassWarning):
+                raise PingError("Authorization input cancelled or hidden input unavailable; no new credentials saved") from None
+            if not pasted and existing:
+                break
+            try:
+                value = ({"accessToken": pasted} if name == "claude" and pasted.startswith("sk-ant-oat")
+                         else json.loads(pasted))
+                pending.append((name, authorization_data(name, value)))
+                break
+            except (ValueError, TypeError):
+                print("Invalid authorization. Copy the complete text again; an API key cannot replace subscription authorization.")
+    # Validate all selected providers before saving either one.
+    for name, value in pending:
+        save_authorization(name, value)
+        print(f"OK: {name} authorization saved for your Linux user (file permissions: 600).")
+    if pending:
+        print("Imported tokens are not refreshed automatically. If they expire, sign in on Windows and re-run setup to paste fresh text.")
+    return 0
 
 
 def codex_tokens():
@@ -42,7 +172,16 @@ def codex_tokens():
             raise ValueError("No token")
         return tokens
     except (OSError, ValueError, KeyError, TypeError):
-        raise PingError("cannot read ChatGPT token in auth.json, run: codex login") from None
+        raise PingError("cannot read ChatGPT token; run codex login or re-run ai-ping-setup.sh to import Windows authorization") from None
+
+
+def claude_headers():
+    try:
+        data = authorization_data("claude", read_json(auth_path("claude")))
+        return {"Authorization": "Bearer " + data["claudeAiOauth"]["accessToken"],
+                "anthropic-beta": "oauth-2025-04-20"}
+    except (OSError, ValueError, TypeError):
+        raise PingError("cannot read Claude token; sign in with claude or re-run ai-ping-setup.sh to import Windows authorization") from None
 
 
 def request(url, headers, body=None, timeout=30):
@@ -87,6 +226,8 @@ def claude_environment():
 
 
 def claude_ping(model):
+    if not shutil.which("claude"):
+        return claude_http_ping(model)
     output = run_cli([
         "claude", "-p", "Reply: ok", "--model", model,
         "--system-prompt", "Reply with one word.", "--tools", "",
@@ -98,6 +239,35 @@ def claude_ping(model):
             or result.get("subtype") != "success"):
         raise PingError("Claude Code did not return a successful result")
     return str(result.get("result", "")).strip(), result.get("usage"), False
+
+
+def claude_http_ping(model):
+    # CLI aliases are resolved here because the Messages API needs a model ID.
+    models = {"haiku": "claude-haiku-4-5", "sonnet": "claude-sonnet-5-5", "opus": "claude-opus-5-5"}
+    api_model = models.get(model, model)
+    if not api_model.startswith("claude-") or "[" in api_model:
+        raise PingError("without Claude CLI, use haiku, sonnet, opus or a full Claude API model ID")
+    body = {"model": api_model, "max_tokens": 16, "system": "Reply with one word.",
+            "messages": [{"role": "user", "content": "Reply: ok"}],
+            "tools": [], "thinking": {"type": "disabled"}}
+    if api_model in ("claude-sonnet-5-5", "claude-opus-5-5"):
+        body["output_config"] = {"effort": "low"}
+    try:
+        output = request("https://api.anthropic.com/v1/messages",
+                         dict(claude_headers(), **{"anthropic-version": "2023-06-01"}), body, 60)
+    except urllib.error.HTTPError as error:
+        if error.code == 401:
+            raise PingError("Claude token expired (HTTP 401); sign in on Windows and re-run ai-ping-setup.sh to paste fresh authorization") from None
+        raise
+    result = json.loads(output)
+    content, usage = result.get("content"), result.get("usage")
+    if (result.get("type") != "message" or result.get("stop_reason") != "end_turn"
+            or not isinstance(content, list) or not isinstance(usage, dict)):
+        raise PingError("Claude server did not return a completed message with usage")
+    answer = "".join(block["text"] for block in content if block.get("type") == "text")
+    if not answer.strip():
+        raise PingError("No text in completed Claude response")
+    return answer.strip(), usage, False
 
 
 def codex_cli_ping(model):
@@ -144,6 +314,8 @@ def codex_ping(model):
         output = request("https://chatgpt.com/backend-api/codex/responses", headers, body, 60)
     except urllib.error.HTTPError as error:
         if error.code == 401:
+            if not shutil.which("codex"):
+                raise PingError("Codex token expired (HTTP 401); sign in on Windows and re-run ai-ping-setup.sh to paste fresh authorization") from None
             print("Token expired (HTTP 401).")
             return codex_cli_ping(model)
         raise PingError(f"HTTP {error.code}") from None
@@ -169,6 +341,8 @@ def codex_ping(model):
 def current_login(provider):
     try:
         if provider == "claude":
+            if not shutil.which("claude"):
+                return "unavailable"
             status = json.loads(run_cli(["claude", "auth", "status", "--json"], claude_environment(), 10))
             email = status.get("email") if status.get("loggedIn") is True else None
         else:
@@ -246,9 +420,7 @@ def write_window(window, name, provider):
 def write_limits(provider):
     try:
         if provider == "claude":
-            oauth = read_json(auth_path(provider))["claudeAiOauth"]
-            headers = {"Authorization": "Bearer " + oauth["accessToken"],
-                       "anthropic-beta": "oauth-2025-04-20", "Accept": "application/json"}
+            headers = dict(claude_headers(), Accept="application/json")
             usage = json.loads(request("https://api.anthropic.com/api/oauth/usage", headers, timeout=10))
             windows = [(usage.get("five_hour"), "5-hour"), (usage.get("seven_day"), "weekly")]
         else:
@@ -273,6 +445,14 @@ def write_limits(provider):
 
 
 def main(arguments):
+    if len(arguments) == 2 and arguments[0] == "--setup-auth" and arguments[1] in ("both", "claude", "codex"):
+        try:
+            return setup_authorization(arguments[1])
+        except PingError as error:
+            print(f"FAIL: {error}", file=sys.stderr)
+        except OSError:
+            print("FAIL: cannot save authorization for this Linux user", file=sys.stderr)
+        return 1
     if not 1 <= len(arguments) <= 2 or arguments[0] not in ("claude", "codex"):
         print("Usage: claude-ping [model] / codex-ping [model]", file=sys.stderr)
         return 1

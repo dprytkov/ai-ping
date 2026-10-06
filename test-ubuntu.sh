@@ -10,6 +10,9 @@ export TMPDIR=$test_root/tmp
 export HOME="$test_root/home with 'quotes' and %percent"
 export TEST_CRONTAB=$test_root/crontab
 export TEST_CALLS=$test_root/calls
+export TEST_REAL_DATE
+TEST_REAL_DATE=$(command -v date)
+export TZ=UTC
 export PATH="$test_root/bin:$PATH"
 unset SUDO_USER CLAUDE_CONFIG_DIR CODEX_HOME
 mkdir -p -- "$TMPDIR" "$HOME" "$test_root/bin" "$test_root/fixture/ai-ping-main"
@@ -42,6 +45,11 @@ MOCK
 cat >"$test_root/bin/python3" <<'MOCK'
 #!/usr/bin/env bash
 [[ $# = 3 && -f $1 && $1 = */ai-ping.py ]] || exit 91
+if [[ $2 = --setup-auth ]]; then
+    [[ $3 = both || $3 = claude || $3 = codex ]] || exit 91
+    if [[ ${TEST_AUTH_FAILURE:-0} = 1 ]]; then echo 'FAIL: offline authorization failure' >&2; exit 1; fi
+    exit 0
+fi
 printf '%s %s\n' "$2" "$3" >>"$TEST_CALLS"
 echo "OK: offline $2 $3"
 [[ ${TEST_PROVIDER_FAILURE:-} != "$2" ]]
@@ -50,6 +58,11 @@ cat >"$test_root/bin/flock" <<'MOCK'
 #!/usr/bin/env bash
 [[ $* = '-n 9' ]] || exit 91
 [[ ${TEST_LOCK_BUSY:-0} != 1 ]]
+MOCK
+cat >"$test_root/bin/date" <<'MOCK'
+#!/usr/bin/env bash
+[[ $* = '+%H:%M' && -n ${TEST_NOW_UTC:-} ]] || exit 91
+exec "$TEST_REAL_DATE" --date "$TEST_NOW_UTC UTC" '+%H:%M'
 MOCK
 cat >"$test_root/bin/curl" <<'MOCK'
 #!/usr/bin/env bash
@@ -71,9 +84,12 @@ chmod +x "$test_root/bin/"*
 echo '15 3 * * * echo unrelated' >"$TEST_CRONTAB"
 echo '# existing shell settings' >"$HOME/.bashrc"
 setup=$source_directory/ai-ping-setup.sh
-bash "$setup" --start 08:00 --provider both >"$test_root/output"
-assert_contains "$test_root/output" '08:00 13:00 18:00 23:00'
-for hour in 8 13 18 23; do assert_contains "$TEST_CRONTAB" "0 $hour * * *"; done
+bash "$setup" --provider both </dev/null >"$test_root/output"
+assert_contains "$test_root/output" 'Daily schedule (Europe/Moscow): 06:00 11:01 16:02 21:03'
+assert_contains "$TEST_CRONTAB" '# Daily (Europe/Moscow): 06:00 11:01 16:02 21:03'
+assert_contains "$TEST_CRONTAB" '* * * * * /bin/bash '
+assert_contains "$TEST_CRONTAB" ' --scheduled'
+assert_contains "$HOME/.local/bin/ai-ping-run" 'export TZ=Europe/Moscow'
 assert_contains "$TEST_CRONTAB" '15 3 * * * echo unrelated'
 for name in claude-ping codex-ping ai-ping.py ai-ping-run ai-ping-LICENSE.txt; do
     [[ -f $HOME/.local/bin/$name ]] || fail "Missing installed file: $name"
@@ -86,24 +102,62 @@ cmp "$source_directory/LICENSE" "$HOME/.local/bin/ai-ping-LICENSE.txt"
 assert_empty_temp
 pass 'Install, preserved cron jobs, file copying, no ping during setup'
 
+# Cron's/server's UTC clock must still trigger exactly the Windows Moscow slots.
+for utc_time in 03:00 08:01 13:02 18:03; do
+    calls_before=0
+    if [[ -f $TEST_CALLS ]]; then calls_before=$(wc -l <"$TEST_CALLS"); fi
+    TEST_NOW_UTC="2026-10-06 $utc_time:00" bash "$HOME/.local/bin/ai-ping-run" --scheduled
+    [[ $(wc -l <"$TEST_CALLS") = $((calls_before + 2)) ]] || fail "Windows slot was skipped: $utc_time UTC"
+done
+calls_before=$(wc -l <"$TEST_CALLS")
+for utc_time in 02:59 03:01 08:00 08:02 13:01 13:03 18:02 18:04 06:00 11:01 16:02 21:03; do
+    TEST_NOW_UTC="2026-10-06 $utc_time:00" bash "$HOME/.local/bin/ai-ping-run" --scheduled
+done
+[[ $(wc -l <"$TEST_CALLS") = "$calls_before" ]] || fail 'Runner pinged outside the Windows-time schedule'
+pass 'Four Windows Moscow slots on a UTC server, no pings on other minute ticks'
+
 bash "$setup" --start 07:30 --provider codex --codex-model gpt-5.6-sol >"$test_root/output"
-assert_contains "$test_root/output" '07:30 12:30 17:30 22:30'
+assert_contains "$test_root/output" '07:30 12:31 17:32 22:33'
 [[ $(grep -c '^# BEGIN AI-PING$' "$TEST_CRONTAB") = 1 ]] || fail 'Duplicate cron block'
 [[ $(grep -c '^# BEGIN AI-PING PATH$' "$HOME/.bashrc") = 1 ]] || fail 'Duplicate Bash PATH block'
 [[ $(grep -c '^# BEGIN AI-PING PATH$' "$HOME/.profile") = 1 ]] || fail 'Duplicate profile PATH block'
 assert_contains "$HOME/.bashrc" '# existing shell settings'
 profile_path=$(HOME="$HOME" bash --noprofile --norc -c 'source "$HOME/.profile"; source "$HOME/.bashrc"; source "$HOME/.profile"; printf "%s" "$PATH"')
 [[ $profile_path != "$HOME/.local/bin:$HOME/.local/bin:"* ]] || fail 'Profiles duplicated the installation PATH'
-[[ $(grep -c '^[0-9].* /bin/bash ' "$TEST_CRONTAB") = 4 ]] || fail 'Incorrect schedule size'
-if grep -q '^30 23 ' "$TEST_CRONTAB"; then fail 'Scheduled after 23:00'; fi
+[[ $(grep -c '^\* \* \* \* \* /bin/bash ' "$TEST_CRONTAB") = 1 ]] || fail 'Duplicate scheduled tick'
+assert_contains "$HOME/.local/bin/ai-ping-run" '07:30|12:31|17:32|22:33'
 # Simulate cron's removal of escaped percent signs, then execute its shell command.
-cron_line=$(grep '^30 7 ' "$TEST_CRONTAB")
+cron_line=$(grep '^\* \* \* \* \* /bin/bash ' "$TEST_CRONTAB")
 cron_command=$(printf '%s\n' "$cron_line" | cut -d ' ' -f 6-)
 cron_command=${cron_command//\\%/%}
-/bin/sh -c "$cron_command"
+TEST_NOW_UTC='2026-10-06 04:30:00' /bin/sh -c "$cron_command"
 assert_contains "$TEST_CALLS" 'codex gpt-5.6-sol'
 assert_contains "$HOME/.local/state/ai-ping/ai-ping.log" 'OK: offline codex gpt-5.6-sol'
-pass 'Repeated install, exact five-hour schedule, cron quoting with spaces/quotes/percent'
+pass 'Repeated install, five hours plus one minute, cron quoting with spaces/quotes/percent'
+
+# Other Windows zones can be selected without changing the machine or other jobs.
+bash "$setup" --start 06:00 --provider codex --timezone Asia/Kolkata >"$test_root/output"
+assert_contains "$test_root/output" 'Daily schedule (Asia/Kolkata): 06:00 11:01 16:02 21:03'
+calls_before=$(wc -l <"$TEST_CALLS")
+TEST_NOW_UTC='2026-10-06 00:30:00' bash "$HOME/.local/bin/ai-ping-run" --scheduled
+[[ $(wc -l <"$TEST_CALLS") = $((calls_before + 1)) ]] || fail 'Half-hour time zone did not fire'
+assert_contains "$TEST_CRONTAB" '15 3 * * * echo unrelated'
+bash "$setup" --start 06:00 --provider codex --timezone Europe/Berlin >"$test_root/output"
+calls_before=$(wc -l <"$TEST_CALLS")
+TEST_NOW_UTC='2026-07-06 04:00:00' bash "$HOME/.local/bin/ai-ping-run" --scheduled
+TEST_NOW_UTC='2026-01-06 05:00:00' bash "$HOME/.local/bin/ai-ping-run" --scheduled
+[[ $(wc -l <"$TEST_CALLS") = $((calls_before + 2)) ]] || fail 'Time zone did not track summer/winter offset'
+pass 'Configurable Windows time zone, half-hour offset and summer/winter time'
+
+# Auth collection must succeed before cron, installed commands or profiles change.
+saved_cron=$(cat "$TEST_CRONTAB")
+saved_runner=$(cat "$HOME/.local/bin/ai-ping-run")
+saved_profile=$(cat "$HOME/.profile")
+TEST_AUTH_FAILURE=1 expect_failure bash "$setup" --start 09:00 --provider both
+[[ $(cat "$TEST_CRONTAB") = "$saved_cron" ]] || fail 'Authorization failure changed cron'
+[[ $(cat "$HOME/.local/bin/ai-ping-run") = "$saved_runner" ]] || fail 'Authorization failure changed runner'
+[[ $(cat "$HOME/.profile") = "$saved_profile" ]] || fail 'Authorization failure changed profile'
+pass 'Authorization failure preserves schedule, runner and profile'
 
 # CLI paths and alternate profile directories survive a minimal cron environment.
 export CLAUDE_CONFIG_DIR="$HOME/custom claude"
@@ -122,8 +176,8 @@ TEST_LOCK_BUSY=1 bash "$HOME/.local/bin/ai-ping-run"
 pass 'Runner attempts both providers, returns failure, skips overlapping runs'
 
 bash "$setup" --start 23:00 --provider claude >"$test_root/output"
-[[ $(grep -c '^[0-9].* /bin/bash ' "$TEST_CRONTAB") = 1 ]] || fail '23:00 boundary is wrong'
-assert_contains "$TEST_CRONTAB" '0 23 * * *'
+assert_contains "$TEST_CRONTAB" '# Daily (Europe/Moscow): 23:00'
+assert_contains "$HOME/.local/bin/ai-ping-run" '        23:00) ;;'
 saved_cron=$(cat "$TEST_CRONTAB")
 for time in 23:01 24:00 7:30 08:60 nonsense; do expect_failure bash "$setup" --start "$time"; done
 expect_failure bash "$setup" --provider invalid
@@ -131,6 +185,10 @@ expect_failure bash "$setup" --claude-model 'bad model'
 expect_failure bash "$setup" --codex-model '--unsafe'
 expect_failure bash "$setup" --start
 expect_failure bash "$setup" --unknown
+expect_failure bash "$setup" --timezone
+for zone in missing/zone ../etc/passwd /etc/passwd 'Europe/Moscow bad' ''; do
+    expect_failure bash "$setup" --timezone "$zone"
+done
 [[ $(cat "$TEST_CRONTAB") = "$saved_cron" ]] || fail 'Invalid input changed the crontab'
 pass '23:00 boundary, invalid options leave cron untouched'
 
@@ -150,20 +208,20 @@ pass 'Read/write errors, sudo and damaged cron blocks fail safely'
 
 rm -- "$TEST_CRONTAB"
 bash "$setup" --start 09:00 --provider claude >"$test_root/output"
-assert_contains "$test_root/output" '09:00 14:00 19:00'
+assert_contains "$test_root/output" '09:00 14:01 19:02'
 pass 'First installation with no existing user crontab'
 
 bash "$setup" </dev/null >"$test_root/output"
-assert_contains "$test_root/output" '08:00 13:00 18:00 23:00'
+assert_contains "$test_root/output" '06:00 11:01 16:02 21:03'
 assert_contains "$test_root/output" 'Provider: both'
 bash "$setup" --start 00:00 --provider claude --claude-model 'sonnet[1m]' >"$test_root/output"
-assert_contains "$test_root/output" '00:00 05:00 10:00 15:00 20:00'
+assert_contains "$test_root/output" '00:00 05:01 10:02 15:03 20:04'
 pass 'Noninteractive defaults, midnight and bracketed model names'
 
 export TEST_ARCHIVE=$test_root/archive.tar.gz
 tar -czf "$TEST_ARCHIVE" -C "$test_root/fixture" ai-ping-main
 bash "$source_directory/install.sh" --start 08:00 --provider codex >"$test_root/output"
-assert_contains "$test_root/output" '08:00 13:00 18:00 23:00'
+assert_contains "$test_root/output" '08:00 13:01 18:02'
 assert_empty_temp
 for scenario in failure empty corrupt; do
     export TEST_DOWNLOAD_SCENARIO=$scenario

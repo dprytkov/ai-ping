@@ -63,26 +63,26 @@ To inspect the internet installer first, review [install.bat](install.bat). The 
 
 ## Ubuntu
 
-Install Python 3, cron, and the selected provider's CLI; sign in as the user who will run the scheduled pings. The scripts use Python's standard library, with no pip packages or jq.
+Install Python 3 and cron. The provider CLIs are optional: if `claude` or `codex` is missing, setup asks you to paste authorization copied from Windows. If a CLI is installed, sign in as the user who will run the scheduled pings. The scripts use Python's standard library, with no pip packages or jq.
 
 ```bash
 sudo apt update
-sudo apt install python3 cron util-linux curl tar
+sudo apt install python3 cron util-linux curl tar tzdata
 sudo systemctl enable --now cron
 ```
 
 From a clone or extracted archive, run setup **without sudo**:
 
 ```bash
-bash ai-ping-setup.sh --start 08:00 --provider both
+bash ai-ping-setup.sh --start 06:00 --provider both
 ```
 
-Without options, setup asks for the first daily time and `both`, `claude`, or `codex` (defaults: `08:00`, `both`). Noninteractive runs use these defaults. `08:00` creates daily runs at **08:00, 13:00, 18:00, 23:00** in Ubuntu's local time zone. `07:30` creates **07:30, 12:30, 17:30, 22:30**. Runs never start after 23:00; an existing request may finish later. A missed run while the machine is off is skipped.
+Without options, setup asks for the first daily time and `both`, `claude`, or `codex` (defaults: `06:00`, `both`). The default daily schedule is **06:00, 11:01, 16:02, 21:03 in Windows Moscow time** (`Europe/Moscow`, UTC+3), even if the Linux server uses UTC or another time zone. Runs are spaced 5 hours and 1 minute apart. For example, `--start 07:30` gives **07:30, 12:31, 17:32, 22:33**. Use `--timezone` with an IANA name matching your Windows time zone, for example `--timezone Europe/Berlin`, if it differs. Check your Windows zone in PowerShell with `Get-TimeZone`. Noninteractive runs use the schedule defaults, but require existing authorization if a selected CLI is missing. `--start` and `--provider` do not skip a required authorization prompt. Runs never start after 23:00 in the selected zone; an existing request may finish later. A missed run while the machine is off is skipped.
 
 The internet launcher downloads and extracts the repository before calling the same setup:
 
 ```bash
-curl --fail --location --proto '=https' --tlsv1.2 --output /tmp/ai-ping-install.sh https://raw.githubusercontent.com/dprytkov/ai-ping/main/install.sh && bash /tmp/ai-ping-install.sh --start 08:00 --provider both
+curl --fail --location --proto '=https' --tlsv1.2 --output /tmp/ai-ping-install.sh https://raw.githubusercontent.com/dprytkov/ai-ping/main/install.sh && bash /tmp/ai-ping-install.sh --start 06:00 --provider both
 ```
 
 Setup installs `claude-ping`, `codex-ping`, the shared `ai-ping.py`, and `ai-ping-run` into `~/.local/bin`, plus `ai-ping-LICENSE.txt`. It adds a guarded PATH block to `.profile` and `.bashrc`; open a new Bash terminal afterward. Repeat setup to change the schedule or update scripts. It replaces only its marked block in your crontab, preserves other jobs, and sends no model requests during installation.
@@ -94,7 +94,31 @@ crontab -l
 tail -n 40 ~/.local/state/ai-ping/ai-ping.log
 ```
 
-Scheduled models can be set with `--claude-model sonnet --codex-model gpt-5.6-sol`. The runner records your installation-time PATH, `CLAUDE_CONFIG_DIR`, and `CODEX_HOME` if set, uses the same user's credentials, and prevents overlapping scheduled runs. Both providers are attempted even if one fails. It runs while signed out as long as cron and the machine are running. Logs may contain your account email. Use `crontab -e` and remove the `# BEGIN AI-PING` / `# END AI-PING` block to stop scheduling. [Detailed Ubuntu instructions](ai-ping.md#ubuntu).
+Scheduled models can be set with `--claude-model sonnet --codex-model gpt-5.6-sol`. The runner records your installation-time PATH, `CLAUDE_CONFIG_DIR`, and `CODEX_HOME` if set, uses the same user's credentials, and prevents overlapping scheduled runs. Cron checks the selected zone once a minute; model requests run only at the scheduled times listed in its marked comment. The server's time zone and other cron jobs stay unchanged. Both providers are attempted even if one fails. It runs while signed out as long as cron and the machine are running. Logs may contain your account email. Use `crontab -e` and remove the `# BEGIN AI-PING` / `# END AI-PING` block to stop scheduling. [Detailed Ubuntu instructions](ai-ping.md#ubuntu).
+
+### Copy authorization from Windows
+
+For each selected CLI that is missing on Linux, setup shows the Windows copy command and asks for the resulting text. Open **Start → PowerShell** on the Windows computer where you already use that account; administrator rights are not needed.
+
+**Claude:** run `claude`, enter `/login`, sign in and exit Claude Code. Then paste this command into PowerShell and press Enter:
+
+```powershell
+$aiPingAuthDir = if ($env:CLAUDE_CONFIG_DIR) { $env:CLAUDE_CONFIG_DIR } else { Join-Path $env:USERPROFILE '.claude' }; Get-Content -Raw -LiteralPath (Join-Path $aiPingAuthDir '.credentials.json') | ConvertFrom-Json | ConvertTo-Json -Depth 20 -Compress | Set-Clipboard
+```
+
+This copies `%USERPROFILE%\.claude\.credentials.json` as one line. If the file is missing, run `claude setup-token` on Windows and copy the token it prints instead. [Claude credential storage](https://code.claude.com/docs/en/authentication).
+
+**Codex:** run `codex login` and sign in with ChatGPT. Then paste this command into PowerShell:
+
+```powershell
+$aiPingAuthDir = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $env:USERPROFILE '.codex' }; Get-Content -Raw -LiteralPath (Join-Path $aiPingAuthDir 'auth.json') | ConvertFrom-Json | ConvertTo-Json -Depth 20 -Compress | Set-Clipboard
+```
+
+This copies `%USERPROFILE%\.codex\auth.json` as one line. If the file is missing, open `.codex\config.toml` in your Windows user folder with Notepad, set `cli_auth_credentials_store = "file"`, run `codex login` again, and repeat the copy command. If `CODEX_HOME` is set, use that folder instead. Both copy commands respect the provider's custom profile directory. [Codex credential storage and transfer](https://learn.chatgpt.com/docs/auth).
+
+Return to the Linux setup prompt, paste with **Ctrl+Shift+V** or right-click, and press Enter. The paste is hidden; this is expected. Do this separately when prompted for each provider. Invalid text is rejected without being printed. Press Enter to keep existing credentials on a repeat install, or paste new text to replace the AI Ping copy.
+
+AI Ping saves only the access token and, for Codex, account/identity fields under `~/.local/state/ai-ping/credentials/` with file mode `600` and directory mode `700`. It does not overwrite CLI profiles or save refresh tokens. Treat this text like a password; do not share it or put it in a command argument. Clear the Windows clipboard afterward with `Set-Clipboard -Value ''`. Without a CLI, pings use direct HTTP requests; imported tokens are not refreshed automatically. On HTTP 401, sign in again on Windows and repeat setup to paste fresh authorization. Claude's email is `login=unavailable` without its CLI; quota lookup is attempted as usual. Direct Claude requests support `haiku`, `sonnet`, `opus`, or a full API model ID, with tools and thinking disabled.
 
 ## Windows requirements
 
@@ -103,7 +127,7 @@ Scheduled models can be set with `--claude-model sonnet --codex-model gpt-5.6-so
 - The relevant CLI, signed in with a subscription account that supports your chosen model.
 - Claude Code with `--safe-mode` and `--effort` support; tested with version **2.1.289**.
 
-**Sign in:** run `claude` and use `/login`, or run `codex login`. Installers do not install the CLIs or sign you in. The Windows installer does not create scheduled tasks; Ubuntu setup creates the cron schedule described above.
+**Sign in:** run `claude` and use `/login`, or run `codex login`. Installers do not install the CLIs or sign you in; Ubuntu setup can import Windows authorization when a CLI is missing. The Windows installer does not create scheduled tasks; Ubuntu setup creates the cron schedule described above.
 
 ## Usage
 
@@ -176,12 +200,12 @@ Use `codex-ping` in the task name and script path for Codex. [The detailed Russi
 | Symptom | Check |
 | --- | --- |
 | CLI or ping command not found | Verify installation and `PATH`; open a new terminal |
-| Authentication failure | Sign in again: `claude` → `/login`, or `codex login` |
+| Authentication failure | Sign in again: `claude` → `/login`, or `codex login`; without a Linux CLI, repeat setup and paste fresh Windows authorization |
 | Model unavailable | Pass a model supported by your account |
 | Quota warning | Check the connection and subscription sign-in |
 | Antivirus warning | Keep protection enabled; review the files and detection instead of adding exclusions |
 
-The internet installers save files to disk before running local setup. Windows scripts use PowerShell; Ubuntu scripts use Bash and Python 3. Authentication files stay in your user profile; backups, credentials, and temporary test profiles are excluded from Git. On Ubuntu, Codex reads `CODEX_HOME/auth.json` (default `~/.codex/auth.json`); Claude reads `CLAUDE_CONFIG_DIR/.credentials.json` (default `~/.claude/.credentials.json`). Codex's direct request requires file-based ChatGPT authentication.
+The internet installers save files to disk before running local setup. Windows scripts use PowerShell; Ubuntu scripts use Bash and Python 3. Authentication files stay in your user profile; backups, credentials, and temporary test profiles are excluded from Git. On Ubuntu, Codex reads `CODEX_HOME/auth.json` (default `~/.codex/auth.json`); Claude reads `CLAUDE_CONFIG_DIR/.credentials.json` (default `~/.claude/.credentials.json`). Without a provider's CLI, its imported AI Ping credentials take precedence if present. Codex's direct request requires file-based ChatGPT authentication.
 
 ## Development
 
