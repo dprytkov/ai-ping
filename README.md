@@ -35,15 +35,14 @@ curl.exe --fail --location --output "%TEMP%\ai-ping-install.bat" https://raw.git
 
 PowerShell uses `$env:TEMP` and `&`; cmd uses `%TEMP%` and `call`. The PowerShell command only launches the downloaded file when curl succeeds.
 
-The installer saves a GitHub ZIP archive to disk, extracts it, and installs both commands into `%USERPROFILE%\.local\bin`. It adds that folder to your user `PATH` without duplicates and removes the temporary archive folder.
+The installer saves a GitHub ZIP archive to disk, extracts it, and installs `ai-ping`, `claude-ping`, and `codex-ping` into `%USERPROFILE%\.local\bin`. It adds that folder to your user `PATH` without duplicates and removes the temporary archive folder.
 
 The MIT notice is installed beside the commands as `ai-ping-LICENSE.txt`.
 
 **No Git or administrator access required.** Repeat the command to update. Open a new terminal when installation finishes:
 
 ```bat
-claude-ping
-codex-ping
+ai-ping
 ```
 
 <details>
@@ -55,7 +54,7 @@ cd ai-ping
 .\ai-ping-setup.bat
 ```
 
-Or [download the ZIP](https://github.com/dprytkov/ai-ping/archive/refs/heads/main.zip), extract it, and run `ai-ping-setup.bat`. Keep it beside both ping scripts and `LICENSE`.
+Or [download the ZIP](https://github.com/dprytkov/ai-ping/archive/refs/heads/main.zip), extract it, and run `ai-ping-setup.bat`. Keep it beside all three ping scripts and `LICENSE`.
 
 To inspect the internet installer first, review [install.bat](install.bat). The downloaded launcher remains at `%TEMP%\ai-ping-install.bat` for inspection.
 
@@ -85,7 +84,7 @@ The internet launcher downloads and extracts the repository before calling the s
 curl --fail --location --proto '=https' --tlsv1.2 --output /tmp/ai-ping-install.sh https://raw.githubusercontent.com/dprytkov/ai-ping/main/install.sh && bash /tmp/ai-ping-install.sh --start 06:00 --provider both
 ```
 
-Setup installs `claude-ping`, `codex-ping`, the shared `ai-ping.py`, and `ai-ping-run` into `~/.local/bin`, plus `ai-ping-LICENSE.txt`. It adds a guarded PATH block to `.profile` and `.bashrc`; open a new Bash terminal afterward. Repeat setup to change the schedule or update scripts. It replaces only its marked block in your crontab, preserves other jobs, and sends no model requests during installation.
+Setup installs `ai-ping`, `claude-ping`, `codex-ping`, the shared `ai-ping.py`, and `ai-ping-run` into `~/.local/bin`, plus `ai-ping-LICENSE.txt`. It adds a guarded PATH block to `.profile` and `.bashrc`; open a new Bash terminal afterward. Repeat setup to change the schedule or update scripts. It replaces only its marked block in your crontab, preserves other jobs, and sends no model requests during installation.
 
 ```bash
 claude-ping sonnet
@@ -131,8 +130,11 @@ AI Ping saves only the access token and, for Codex, account/identity fields unde
 
 ## Usage
 
+Run `ai-ping` without arguments to ping Codex, then Claude, with their default models on Windows or Ubuntu. Both are attempted even if one fails. It exits with `0` only when both succeed; otherwise `1`. Use the individual commands below to choose a model.
+
 | Command | Default model | Request |
 | --- | --- | --- |
+| `ai-ping` | Both defaults below | Runs Codex, then Claude; attempts both even if one fails |
 | `claude-ping` | `haiku` | Short system prompt, safe mode, low effort; tools and MCP disabled |
 | `codex-ping` | `gpt-5.6-luna` | Direct request with low reasoning effort; CLI fallback on HTTP 401 |
 
@@ -215,6 +217,7 @@ There is no build step. Offline checks use mocked CLIs, HTTP responses, ZIP fixt
 powershell -NoProfile -ExecutionPolicy Bypass -File .\test-claude-ping.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\test-codex-ping.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\test-install.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\test-ai-ping.ps1
 ```
 
 Ubuntu checks use isolated homes, mocked crontab/CLI commands, local archives, and HTTP fixtures:

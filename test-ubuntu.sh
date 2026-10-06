@@ -26,11 +26,11 @@ expect_failure() {
     assert_contains "$test_root/output" 'FAIL:'
     assert_empty_temp
 }
-for name in ai-ping-setup.sh install.sh claude-ping.sh codex-ping.sh; do
+for name in ai-ping-setup.sh install.sh claude-ping.sh codex-ping.sh ai-ping.sh; do
     bash -n "$source_directory/$name"
 done
 cp -- "$source_directory/ai-ping-setup.sh" "$source_directory/claude-ping.sh" \
-    "$source_directory/codex-ping.sh" "$source_directory/ai-ping.py" "$source_directory/LICENSE" \
+    "$source_directory/codex-ping.sh" "$source_directory/ai-ping.sh" "$source_directory/ai-ping.py" "$source_directory/LICENSE" \
     "$test_root/fixture/ai-ping-main/"
 cat >"$test_root/bin/crontab" <<'MOCK'
 #!/usr/bin/env bash
@@ -44,7 +44,10 @@ fi
 MOCK
 cat >"$test_root/bin/python3" <<'MOCK'
 #!/usr/bin/env bash
-[[ $# = 3 && -f $1 && $1 = */ai-ping.py ]] || exit 91
+[[ ($# = 2 || $# = 3) && -f $1 && $1 = */ai-ping.py ]] || exit 91
+if [[ $# = 2 ]]; then
+    case "$2" in codex) set -- "$@" gpt-5.6-luna ;; claude) set -- "$@" haiku ;; *) exit 91 ;; esac
+fi
 if [[ $2 = --setup-auth ]]; then
     [[ $3 = both || $3 = claude || $3 = codex ]] || exit 91
     if [[ ${TEST_AUTH_FAILURE:-0} = 1 ]]; then echo 'FAIL: offline authorization failure' >&2; exit 1; fi
@@ -91,16 +94,33 @@ assert_contains "$TEST_CRONTAB" '* * * * * /bin/bash '
 assert_contains "$TEST_CRONTAB" ' --scheduled'
 assert_contains "$HOME/.local/bin/ai-ping-run" 'export TZ=Europe/Moscow'
 assert_contains "$TEST_CRONTAB" '15 3 * * * echo unrelated'
-for name in claude-ping codex-ping ai-ping.py ai-ping-run ai-ping-LICENSE.txt; do
+for name in claude-ping codex-ping ai-ping ai-ping.py ai-ping-run ai-ping-LICENSE.txt; do
     [[ -f $HOME/.local/bin/$name ]] || fail "Missing installed file: $name"
 done
 cmp "$source_directory/claude-ping.sh" "$HOME/.local/bin/claude-ping"
 cmp "$source_directory/codex-ping.sh" "$HOME/.local/bin/codex-ping"
+cmp "$source_directory/ai-ping.sh" "$HOME/.local/bin/ai-ping"
 cmp "$source_directory/ai-ping.py" "$HOME/.local/bin/ai-ping.py"
 cmp "$source_directory/LICENSE" "$HOME/.local/bin/ai-ping-LICENSE.txt"
 [[ ! -e $TEST_CALLS ]] || fail 'Installer sent a ping'
 assert_empty_temp
 pass 'Install, preserved cron jobs, file copying, no ping during setup'
+
+# Manual combined command uses defaults and attempts both providers on failure.
+for failure in none codex claude; do
+    : >"$TEST_CALLS"
+    status=0
+    TEST_PROVIDER_FAILURE=$failure bash "$HOME/.local/bin/ai-ping" >"$test_root/output" || status=$?
+    expected=1
+    if [[ $failure = none ]]; then expected=0; fi
+    [[ $status = "$expected" ]] || fail 'Unexpected combined ping exit code'
+    [[ $(cat "$TEST_CALLS") = $'codex gpt-5.6-luna\nclaude haiku' ]] || fail 'Combined ping skipped a provider or changed defaults'
+done
+: >"$TEST_CALLS"
+bash "$source_directory/ai-ping.sh" >"$test_root/output"
+[[ $(cat "$TEST_CALLS") = $'codex gpt-5.6-luna\nclaude haiku' ]] || fail 'Source combined command failed'
+rm -- "$TEST_CALLS"
+pass 'Combined command from source and installation, defaults, both attempts and exit codes'
 
 # Cron's/server's UTC clock must still trigger exactly the Windows Moscow slots.
 for utc_time in 03:00 08:01 13:02 18:03; do

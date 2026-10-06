@@ -1,6 +1,6 @@
 <# : batch entry point; the rest of this file is PowerShell
 @echo off
-rem Install both ping scripts for the current user. No administrator needed.
+rem Install all ping commands for the current user. No administrator needed.
 rem Copyright (c) 2026 dprytkov. SPDX-License-Identifier: MIT
 setlocal DisableDelayedExpansion
 set "PING_SETUP_SELF=%~f0"
@@ -42,13 +42,13 @@ try {
     }
     $sourceDirectory = [IO.Path]::GetDirectoryName($env:PING_SETUP_SELF)
     $targetDirectory = Join-Path $env:USERPROFILE '.local\bin'
-    $scripts = @('claude-ping.bat', 'codex-ping.bat')
+    $scripts = @('claude-ping.bat', 'codex-ping.bat', 'ai-ping.bat')
 
-    # Check both sources before installing either file.
+    # Check all sources before installing any file.
     foreach ($name in $scripts) {
         $source = Join-Path $sourceDirectory $name
         if (-not (Test-Path -LiteralPath $source -PathType Leaf)) {
-            throw "Missing $name. Keep ai-ping-setup.bat beside both ping scripts."
+            throw "Missing $name. Keep ai-ping-setup.bat beside all three ping scripts."
         }
     }
 
@@ -108,7 +108,7 @@ try {
     Write-Host ''
     Write-Host 'OK: installation complete. Open a new terminal.'
     Write-Host 'Sign in if needed: claude, then /login; codex login.'
-    Write-Host 'Then run: claude-ping or codex-ping.'
+    Write-Host 'Then run: ai-ping for both, or claude-ping / codex-ping separately.'
     Write-Host 'Run this setup again to update the installed scripts.'
     exit 0
 } catch {

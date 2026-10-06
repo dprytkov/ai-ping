@@ -93,7 +93,7 @@ function Test-Install {
     if (-not $Repeat) {
         @{ Path = $initialPath; Writes = 0 } | ConvertTo-Json | Set-Content -LiteralPath $registryPath
     } else {
-        foreach ($scriptName in @('claude-ping.bat', 'codex-ping.bat')) {
+        foreach ($scriptName in @('claude-ping.bat', 'codex-ping.bat', 'ai-ping.bat')) {
             'outdated installation' | Set-Content -LiteralPath (Join-Path $targetDirectory $scriptName)
         }
     }
@@ -143,7 +143,7 @@ function Test-Install {
     $passed = $temporaryItems.Count -eq 0
     if ($Scenario -eq 'success') {
         $passed = $passed -and $code -eq 0 -and $output.Contains('OK: installation complete.')
-        foreach ($scriptName in @('claude-ping.bat', 'codex-ping.bat')) {
+        foreach ($scriptName in @('claude-ping.bat', 'codex-ping.bat', 'ai-ping.bat')) {
             $target = Join-Path $targetDirectory $scriptName
             if (-not (Test-Path -LiteralPath $target)) { $passed = $false; continue }
             $sourceBytes = [IO.File]::ReadAllBytes((Join-Path $PSScriptRoot $scriptName))
@@ -186,7 +186,7 @@ try {
     $archiveRoot = Join-Path $testRoot 'archive source'
     $archiveFiles = Join-Path $archiveRoot 'ai-ping-main'
     [void](New-Item -ItemType Directory -Path $archiveFiles -Force)
-    foreach ($scriptName in @('claude-ping.bat', 'codex-ping.bat', 'ai-ping-setup.bat', 'LICENSE')) {
+    foreach ($scriptName in @('claude-ping.bat', 'codex-ping.bat', 'ai-ping.bat', 'ai-ping-setup.bat', 'LICENSE')) {
         Copy-Item -LiteralPath (Join-Path $PSScriptRoot $scriptName) -Destination $archiveFiles
     }
     [IO.Compression.ZipFile]::CreateFromDirectory($archiveRoot, (Join-Path $testRoot 'fixture.zip'))

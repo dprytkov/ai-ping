@@ -70,7 +70,7 @@ for ((minute=first_minute; minute<=23*60; minute+=5*60+1)); do
 done
 
 source_directory=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-for name in claude-ping.sh codex-ping.sh ai-ping.py LICENSE; do
+for name in claude-ping.sh codex-ping.sh ai-ping.sh ai-ping.py LICENSE; do
     [[ -f $source_directory/$name ]] || fail "Missing source file: $name"
 done
 temporary_directory=$(mktemp -d)
@@ -97,6 +97,7 @@ state_directory=$HOME/.local/state/ai-ping
 mkdir -p -- "$target_directory" "$state_directory"
 install -m 755 -- "$source_directory/claude-ping.sh" "$target_directory/claude-ping"
 install -m 755 -- "$source_directory/codex-ping.sh" "$target_directory/codex-ping"
+install -m 755 -- "$source_directory/ai-ping.sh" "$target_directory/ai-ping"
 install -m 644 -- "$source_directory/ai-ping.py" "$target_directory/ai-ping.py"
 install -m 644 -- "$source_directory/LICENSE" "$target_directory/ai-ping-LICENSE.txt"
 

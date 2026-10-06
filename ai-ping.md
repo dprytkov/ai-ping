@@ -1,4 +1,4 @@
-# claude-ping / codex-ping
+# ai-ping / claude-ping / codex-ping
 
 [English overview](README.md) | [Краткая инструкция на русском](README.ru.md)
 
@@ -42,7 +42,7 @@ curl.exe --fail --location --output "%TEMP%\ai-ping-install.bat" https://raw.git
    .\ai-ping-setup.bat
    ```
 
-   Держите `ai-ping-setup.bat`, `claude-ping.bat`, `codex-ping.bat` и `LICENSE` в одной папке. Установщик копирует оба ping-скрипта в `%USERPROFILE%\.local\bin`, создаёт папку при необходимости и добавляет её в пользовательский PATH без дубликатов. Текст лицензии копируется туда же как `ai-ping-LICENSE.txt`. Права администратора не нужны. Повторный запуск обновляет установленные скрипты.
+   Держите `ai-ping-setup.bat`, `ai-ping.bat`, `claude-ping.bat`, `codex-ping.bat` и `LICENSE` в одной папке. Установщик копирует все три ping-скрипта в `%USERPROFILE%\.local\bin`, создаёт папку при необходимости и добавляет её в пользовательский PATH без дубликатов. Текст лицензии копируется туда же как `ai-ping-LICENSE.txt`. Права администратора не нужны. Повторный запуск обновляет установленные скрипты.
 
    После установки откройте новый терминал. Если PATH ещё не обновился, выйдите из учётной записи Windows и войдите снова. Установщик предупреждает об отсутствующих CLI; их установку и вход нужно выполнить отдельно. Пинги и задачи по расписанию во время установки не запускаются.
 3. Проверьте из любого терминала (cmd, PowerShell 5.1 или 7):
@@ -56,7 +56,9 @@ curl.exe --fail --location --output "%TEMP%\ai-ping-install.bat" https://raw.git
 
 ## Параметры
 
-Единственный аргумент — модель:
+Команда `ai-ping` без аргументов запускает Codex, затем Claude с моделями по умолчанию в Windows и Ubuntu. При ошибке одного второй всё равно запускается. Код выхода — `0` только при успехе обоих, иначе `1`. Из папки проекта без установки используйте `.\ai-ping.bat` в Windows или `bash ai-ping.sh` в Ubuntu.
+
+Для отдельных команд `claude-ping` и `codex-ping` единственный аргумент — модель:
 
 ```
 claude-ping sonnet
@@ -75,7 +77,7 @@ sudo apt install python3 cron util-linux curl tar tzdata
 sudo systemctl enable --now cron
 ```
 
-CLI необязательны: при отсутствии `claude` или `codex` установщик запросит авторизацию из Windows, после чего пинги выполняются напрямую через HTTP. Если CLI установлен, выполните вход под обычным пользователем: `claude` → `/login` или `codex login`. Ubuntu-скрипты сохраняют минимальные запросы, используют стандартную библиотеку Python и не требуют pip-пакетов либо jq. `claude-ping.sh` и `codex-ping.sh` вызывают общий `ai-ping.py`; держите эти три файла рядом для запуска без установки.
+CLI необязательны: при отсутствии `claude` или `codex` установщик запросит авторизацию из Windows, после чего пинги выполняются напрямую через HTTP. Если CLI установлен, выполните вход под обычным пользователем: `claude` → `/login` или `codex login`. Ubuntu-скрипты сохраняют минимальные запросы, используют стандартную библиотеку Python и не требуют pip-пакетов либо jq. `claude-ping.sh` и `codex-ping.sh` вызывают общий `ai-ping.py`; держите их вместе с `ai-ping.sh` рядом с этим модулем для запуска без установки.
 
 Из корня клона или распакованного архива:
 
@@ -100,7 +102,7 @@ curl --fail --location --proto '=https' --tlsv1.2 --output /tmp/ai-ping-install.
 
 `install.sh` скачивает архив `main.tar.gz` во временную папку и вызывает `ai-ping-setup.sh`, передавая аргументы. Папка и архив удаляются при успехе и при ошибке; сам загрузчик остаётся в `/tmp/ai-ping-install.sh`. Установщики запускайте **без sudo**, чтобы использовать авторизацию вашего аккаунта. Для установки системных зависимостей sudo нужен.
 
-В `~/.local/bin` копируются команды `claude-ping`, `codex-ping`, модуль `ai-ping.py`, плановый запуск `ai-ping-run` и лицензия `ai-ping-LICENSE.txt`. В `.profile` и `.bashrc` добавляется помеченный блок PATH с защитой от дубликатов. Повторная установка обновляет файлы и заменяет только блок `# BEGIN AI-PING` / `# END AI-PING` в пользовательском crontab; остальные задачи сохраняются. Установка не отправляет запросы к модели и не выполняет вход.
+В `~/.local/bin` копируются команды `ai-ping`, `claude-ping`, `codex-ping`, модуль `ai-ping.py`, плановый запуск `ai-ping-run` и лицензия `ai-ping-LICENSE.txt`. В `.profile` и `.bashrc` добавляется помеченный блок PATH с защитой от дубликатов. Повторная установка обновляет файлы и заменяет только блок `# BEGIN AI-PING` / `# END AI-PING` в пользовательском crontab; остальные задачи сохраняются. Установка не отправляет запросы к модели и не выполняет вход.
 
 ### Авторизация из Windows без CLI в Linux
 
@@ -328,6 +330,7 @@ Unregister-ScheduledTask -TaskPath '\AI ping\' -TaskName claude-ping -Confirm:$f
 powershell -NoProfile -ExecutionPolicy Bypass -File .\test-claude-ping.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\test-codex-ping.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\test-install.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\test-ai-ping.ps1
 ```
 
 Проверки используют временные профили внутри проекта, подставные HTTP-ответы и подставные CLI; живые запросы и реальные токены не используются. Для Claude проверяются модели по умолчанию и явно заданные, запуск через bat, пустой аргумент `--tools ""`, режим `--safe-mode`, низкий effort и отключённое thinking независимо от переменных родительского терминала, запуск вне проекта, токены с кэшем, оба окна, обратный отсчёт, обновлённая авторизация, отсутствие данных, HTTP 401/429, ошибки и коды выхода. Для Codex проверяются обе модели, токены, серверные времена сброса, перестановка и отсутствие окон, HTTP 401 fallback, ошибки и коды выхода. Временные файлы удаляются после проверки.
