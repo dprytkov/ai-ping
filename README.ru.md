@@ -2,7 +2,7 @@
 
 <p align="center">
   <a href="#требования-windows"><img alt="Windows" src="https://img.shields.io/badge/platform-Windows-0078D4?style=flat-square" /></a>
-  <a href="#ubuntu"><img alt="Ubuntu" src="https://img.shields.io/badge/platform-Ubuntu-E95420?style=flat-square" /></a>
+  <a href="#linux"><img alt="Linux" src="https://img.shields.io/badge/platform-Linux-FCC624?style=flat-square" /></a>
   <a href="#требования-windows"><img alt="Windows PowerShell 5.1" src="https://img.shields.io/badge/PowerShell-5.1-5391FE?style=flat-square" /></a>
   <a href="LICENSE"><img alt="Лицензия MIT" src="https://img.shields.io/badge/license-MIT-2ea44f?style=flat-square" /></a>
 </p>
@@ -11,31 +11,37 @@
 
 # AI Ping
 
-**Минимальные запросы к Claude Code и Codex в Windows и Ubuntu — с текущим аккаунтом, токенами, лимитами и временем до сброса.**
+**Минимальные запросы к Claude Code и Codex в Windows и Linux — с текущим аккаунтом, токенами, лимитами и временем до сброса.**
 
-AI Ping проверяет доступ по подписке коротким запросом к модели и показывает email текущего аккаунта, токены запроса, остаток 5-часового и недельного лимитов и время до серверного сброса. Запускайте его вручную, через Планировщик заданий Windows или cron в Ubuntu, чтобы открыть неактивное окно до начала работы.
+AI Ping проверяет доступ по подписке коротким запросом к модели и показывает email текущего аккаунта, токены запроса, остаток 5-часового и недельного лимитов и время до серверного сброса. Запускайте его вручную, через Планировщик заданий Windows или cron в Linux, чтобы открыть неактивное окно до начала работы.
 
-[Быстрый старт](#быстрый-старт) · [Ubuntu](#ubuntu) · [Использование](#использование) · [Пример вывода](#пример-вывода) · [Расписание](#расписание) · [Лицензия](#лицензия)
+[Быстрый старт](#быстрый-старт) · [Linux](#linux) · [Использование](#использование) · [Пример вывода](#пример-вывода) · [Расписание](#расписание) · [Лицензия](#лицензия)
 
 ## Быстрый старт
 
 Выберите команду для своего терминала.
 
-**PowerShell 5.1 / 7** — если приглашение начинается с `PS`:
+**Linux / WSL:**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/dprytkov/ai-ping/main/install.sh | bash
+```
+
+Подходит для разных дистрибутивов Linux с нужными зависимостями; зависимости и расписание описаны в разделе [Linux](#linux).
+
+**Windows PowerShell (5.1 / 7):**
 
 ```powershell
-$aiPingInstaller = Join-Path $env:TEMP 'ai-ping-install.bat'; curl.exe --fail --location --output $aiPingInstaller https://raw.githubusercontent.com/dprytkov/ai-ping/main/install.bat; if ($? -and $LASTEXITCODE -eq 0) { & $aiPingInstaller }
+irm https://raw.githubusercontent.com/dprytkov/ai-ping/main/install.ps1 | iex
 ```
 
-**Командная строка (`cmd.exe`):**
+**Windows CMD:**
 
 ```bat
-curl.exe --fail --location --output "%TEMP%\ai-ping-install.bat" https://raw.githubusercontent.com/dprytkov/ai-ping/main/install.bat && call "%TEMP%\ai-ping-install.bat"
+curl -fsSL https://raw.githubusercontent.com/dprytkov/ai-ping/main/install.bat -o install.bat && install.bat && del install.bat
 ```
 
-В PowerShell используются `$env:TEMP` и `&`, а в cmd — `%TEMP%` и `call`. Команда PowerShell запускает скачанный файл только при успешном завершении curl.
-
-Загрузчик сохраняет ZIP-архив GitHub на диск, распаковывает его и устанавливает `ai-ping`, `claude-ping` и `codex-ping` в `%USERPROFILE%\.local\bin`. Папка добавляется в пользовательский `PATH` без дубликатов; временная папка архива удаляется.
+В Windows загрузчик сохраняет ZIP-архив GitHub на диск, распаковывает его и устанавливает `ai-ping`, `claude-ping` и `codex-ping` в `%USERPROFILE%\.local\bin`. Папка добавляется в пользовательский `PATH` без дубликатов; временная папка архива удаляется. PowerShell также удаляет временный загрузчик, а CMD удаляет `install.bat` после успешной установки.
 
 Текст MIT устанавливается рядом с командами в файл `ai-ping-LICENSE.txt`.
 
@@ -56,19 +62,15 @@ cd ai-ping
 
 Или [скачайте ZIP](https://github.com/dprytkov/ai-ping/archive/refs/heads/main.zip), распакуйте и запустите `ai-ping-setup.bat`. Он должен лежать рядом со всеми тремя ping-скриптами и `LICENSE`.
 
-Чтобы сначала проверить интернет-загрузчик, прочитайте [install.bat](install.bat). Скачанный файл остаётся в `%TEMP%\ai-ping-install.bat` для просмотра.
+Чтобы сначала проверить интернет-загрузчики, прочитайте [install.ps1](install.ps1), [install.bat](install.bat) или [install.sh](install.sh).
 
 </details>
 
-## Ubuntu
+## Linux
 
-Нужны Python 3 и cron. CLI необязательны: если `claude` или `codex` отсутствует, установщик попросит вставить авторизацию из Windows. Если CLI установлен, выполните вход под тем пользователем, от которого будут запускаться пинги. Используется стандартная библиотека Python, без pip-пакетов и jq.
+Подходит любой дистрибутив Linux, включая WSL, с Bash, Python 3.8+, службой cron и пользовательской командой `crontab`, `flock` (util-linux), coreutils, awk, grep, curl, tar, gzip и tzdata. Установите недостающие зависимости пакетным менеджером своего дистрибутива и включите его службу cron (`cron` или `crond`, в зависимости от дистрибутива). В WSL расписание работает, пока запущены дистрибутив и его служба cron.
 
-```bash
-sudo apt update
-sudo apt install python3 cron util-linux curl tar tzdata
-sudo systemctl enable --now cron
-```
+CLI необязательны: если `claude` или `codex` отсутствует, установщик попросит вставить авторизацию из Windows. Если CLI установлен, выполните вход под тем пользователем, от которого будут запускаться пинги. Используется стандартная библиотека Python, без pip-пакетов и jq.
 
 Из клона или распакованного архива запустите установщик **без sudo**:
 
@@ -81,7 +83,7 @@ bash ai-ping-setup.sh --start 06:00 --provider both
 Интернет-загрузчик скачивает и распаковывает репозиторий, затем вызывает тот же установщик:
 
 ```bash
-curl --fail --location --proto '=https' --tlsv1.2 --output /tmp/ai-ping-install.sh https://raw.githubusercontent.com/dprytkov/ai-ping/main/install.sh && bash /tmp/ai-ping-install.sh --start 06:00 --provider both
+curl -fsSL https://raw.githubusercontent.com/dprytkov/ai-ping/main/install.sh | bash
 ```
 
 В `~/.local/bin` устанавливаются `ai-ping`, `claude-ping`, `codex-ping`, общий `ai-ping.py`, `ai-ping-run` и `ai-ping-LICENSE.txt`. Установщик добавляет блок PATH без дубликатов в `.profile` и `.bashrc`; после установки откройте новый терминал Bash. Повторная установка обновляет скрипты и заменяет только свой блок crontab, сохраняя чужие задачи. Во время установки запросы к моделям не отправляются.
@@ -93,7 +95,7 @@ crontab -l
 tail -n 40 ~/.local/state/ai-ping/ai-ping.log
 ```
 
-Для моделей по расписанию есть `--claude-model sonnet --codex-model gpt-5.6-sol`. Плановый запуск сохраняет PATH на момент установки, а также заданные `CLAUDE_CONFIG_DIR` и `CODEX_HOME`, использует авторизацию того же пользователя и блокирует одновременные плановые пинги. Cron проверяет время в выбранном поясе каждую минуту; запросы к моделям выполняются только в часы расписания, указанные в его помеченном комментарии. Часовой пояс сервера и чужие cron-задачи не меняются. При ошибке одного провайдера второй всё равно запускается. Вход в SSH не требуется, пока компьютер и cron работают. Лог может содержать email аккаунта. Для отмены расписания удалите блок `# BEGIN AI-PING` / `# END AI-PING` через `crontab -e`. [Подробная инструкция Ubuntu](ai-ping.md#ubuntu).
+Для моделей по расписанию есть `--claude-model sonnet --codex-model gpt-5.6-sol`. Плановый запуск сохраняет PATH на момент установки, а также заданные `CLAUDE_CONFIG_DIR` и `CODEX_HOME`, использует авторизацию того же пользователя и блокирует одновременные плановые пинги. Cron проверяет время в выбранном поясе каждую минуту; запросы к моделям выполняются только в часы расписания, указанные в его помеченном комментарии. Часовой пояс сервера и чужие cron-задачи не меняются. При ошибке одного провайдера второй всё равно запускается. Вход в SSH не требуется, пока компьютер и cron работают. Лог может содержать email аккаунта. Для отмены расписания удалите блок `# BEGIN AI-PING` / `# END AI-PING` через `crontab -e`. [Подробная инструкция Linux](ai-ping.md#linux).
 
 ### Как скопировать авторизацию из Windows
 
@@ -128,11 +130,11 @@ AI Ping сохраняет только access-токен, права Claude (`s
 - CLI нужного провайдера со входом по подписке и доступом к выбранной модели.
 - Claude Code с поддержкой `--safe-mode` и `--effort`; проверено с версией **2.1.289**.
 
-**Вход:** запустите `claude` и выполните `/login` либо запустите `codex login`. Установщики не устанавливают CLI и не выполняют вход; Ubuntu-установщик может импортировать авторизацию из Windows при отсутствии CLI. Windows-установщик не создаёт задачи по расписанию; Ubuntu-установщик создаёт расписание cron, описанное выше.
+**Вход:** запустите `claude` и выполните `/login` либо запустите `codex login`. Установщики не устанавливают CLI и не выполняют вход; Linux-установщик может импортировать авторизацию из Windows при отсутствии CLI. Windows-установщик не создаёт задачи по расписанию; Linux-установщик создаёт расписание cron, описанное выше.
 
 ## Использование
 
-Выполните `ai-ping` без аргументов для запуска Codex, затем Claude с моделями по умолчанию в Windows или Ubuntu. При ошибке одного второй всё равно запускается. Код выхода — `0`, если оба пинга успешны, иначе `1`. Для выбора модели используйте отдельные команды ниже.
+Выполните `ai-ping` без аргументов для запуска Codex, затем Claude с моделями по умолчанию в Windows или Linux. При ошибке одного второй всё равно запускается. Код выхода — `0`, если оба пинга успешны, иначе `1`. Для выбора модели используйте отдельные команды ниже.
 
 | Команда | Модель по умолчанию | Запрос |
 | --- | --- | --- |
@@ -209,7 +211,7 @@ Register-ScheduledTask -TaskName 'claude-ping' -Action $action -Trigger $trigger
 | Предупреждение о лимитах | Проверьте сеть и вход по подписке |
 | Предупреждение антивируса | Оставьте защиту включённой; проверьте файлы и обнаружение, не добавляя исключения |
 
-Интернет-загрузчики сохраняют файлы на диск перед вызовом локального установщика. Windows-скрипты используют PowerShell, Ubuntu-скрипты — Bash и Python 3. Авторизация остаётся в профиле пользователя; резервные копии, credentials и временные профили тестов исключены из Git. В Ubuntu Codex читает `CODEX_HOME/auth.json` (по умолчанию `~/.codex/auth.json`), Claude — `CLAUDE_CONFIG_DIR/.credentials.json` (по умолчанию `~/.claude/.credentials.json`). При отсутствии CLI провайдера его импортированная авторизация AI Ping имеет приоритет, если сохранена. Прямому запросу Codex нужна авторизация ChatGPT в файле.
+Интернет-загрузчики сохраняют файлы на диск перед вызовом локального установщика. Windows-скрипты используют PowerShell, Linux-скрипты — Bash и Python 3. Авторизация остаётся в профиле пользователя; резервные копии, credentials и временные профили тестов исключены из Git. В Linux Codex читает `CODEX_HOME/auth.json` (по умолчанию `~/.codex/auth.json`), Claude — `CLAUDE_CONFIG_DIR/.credentials.json` (по умолчанию `~/.claude/.credentials.json`). При отсутствии CLI провайдера его импортированная авторизация AI Ping имеет приоритет, если сохранена. Прямому запросу Codex нужна авторизация ChatGPT в файле.
 
 ## Разработка
 
@@ -222,7 +224,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\test-install.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\test-ai-ping.ps1
 ```
 
-Проверки Ubuntu используют отдельные профили, подставные crontab/CLI, локальные архивы и HTTP-ответы:
+Проверки Linux используют отдельные профили, подставные crontab/CLI, локальные архивы и HTTP-ответы:
 
 ```bash
 python3 test-ubuntu.py

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Offline Ubuntu ping regression checks; never use real credentials or HTTP."""
+"""Offline Linux ping regression checks; never use real credentials or HTTP."""
 import base64
 import contextlib
 import datetime as dt
@@ -352,9 +352,17 @@ class PingTests(unittest.TestCase):
 
     @unittest.skipUnless(os.name == "posix", "A Linux terminal is required")
     def test_real_installer_prompts_hide_tokens_and_save_selected_providers(self):
+        self.check_interactive_installer(use_pipe=False)
+
+    @unittest.skipUnless(os.name == "posix", "A Linux terminal is required")
+    def test_curl_pipe_installer_reads_schedule_and_hidden_tokens_from_terminal(self):
+        self.check_interactive_installer(use_pipe=True)
+
+    def check_interactive_installer(self, use_pipe):
         import pty
         import select
         import signal
+        import tarfile
         import termios
 
         home = self.directory / "linux profile"
@@ -378,9 +386,37 @@ fi
         values = [("claude", {"claudeAiOauth": {"accessToken": "offline-terminal-claude-secret"}}),
                   ("codex", {"tokens": {"access_token": "offline-terminal-codex-secret-" + "x" * 9000,
                                         "account_id": "offline-account"}})]
+        prompts = [(name + " authorization: ", json.dumps(value), True) for name, value in values]
+        arguments = ["bash", str(ROOT / "ai-ping-setup.sh"), "--start", "07:30", "--provider", "both"]
+        if use_pipe:
+            archive = self.directory / "fixture.tar.gz"
+            with tarfile.open(archive, "w:gz") as fixture:
+                for name in ("ai-ping-setup.sh", "claude-ping.sh", "codex-ping.sh", "ai-ping.sh", "ai-ping.py", "LICENSE"):
+                    fixture.add(ROOT / name, arcname="ai-ping-main/" + name)
+            curl = binaries / "curl"
+            curl.write_text('''#!/bin/bash
+if [[ $1 = -fsSL && $2 = https://raw.githubusercontent.com/dprytkov/ai-ping/main/install.sh && $# = 2 ]]; then
+    cat "$AI_PING_TEST_INSTALLER"
+    exit 0
+fi
+target=''
+while (($#)); do
+    case "$1" in --output) target=$2; shift 2 ;; *) shift ;; esac
+done
+[[ -n $target ]] || exit 92
+cp -- "$AI_PING_TEST_ARCHIVE" "$target"
+''', encoding="utf-8")
+            curl.chmod(0o755)
+            environment.update(AI_PING_TEST_INSTALLER=str(ROOT / "install.sh"), AI_PING_TEST_ARCHIVE=str(archive))
+            readme = (ROOT / "README.md").read_text(encoding="utf-8")
+            command = readme.split("```bash\n", 1)[1].split("\n```", 1)[0]
+            self.assertTrue(command.startswith("curl -fsSL ") and command.endswith(" | bash"))
+            arguments = ["bash", "-c", command]
+            prompts = [("First daily run in Europe/Moscow (HH:MM) [06:00]: ", "07:30", False),
+                       ("Provider (both/claude/codex) [both]: ", "both", False)] + prompts
         process, terminal = pty.fork()
         if process == 0:
-            os.execvpe("/bin/bash", ["bash", str(ROOT / "ai-ping-setup.sh"), "--start", "07:30", "--provider", "both"], environment)
+            os.execvpe("/bin/bash", arguments, environment)
         output = b""
         next_prompt = 0
         deadline = time.monotonic() + 20
@@ -397,10 +433,11 @@ fi
                 if not chunk:
                     break
                 output += chunk
-                if next_prompt < len(values) and (values[next_prompt][0] + " authorization: ").encode() in output:
-                    self.assertFalse(termios.tcgetattr(terminal)[3] & termios.ECHO, "Token input was echoed")
-                    self.assertFalse(termios.tcgetattr(terminal)[3] & termios.ICANON, "Long tokens would be truncated")
-                    os.write(terminal, json.dumps(values[next_prompt][1]).encode() + b"\n")
+                if next_prompt < len(prompts) and prompts[next_prompt][0].encode() in output:
+                    if prompts[next_prompt][2]:
+                        self.assertFalse(termios.tcgetattr(terminal)[3] & termios.ECHO, "Token input was echoed")
+                        self.assertFalse(termios.tcgetattr(terminal)[3] & termios.ICANON, "Long tokens would be truncated")
+                    os.write(terminal, prompts[next_prompt][1].encode() + b"\n")
                     next_prompt += 1
             _, status = os.waitpid(process, 0)
             process = None
@@ -413,7 +450,7 @@ fi
                 except ProcessLookupError:
                     pass
                 os.waitpid(process, 0)
-        self.assertEqual(next_prompt, 2)
+        self.assertEqual(next_prompt, len(prompts))
         for name, value in values:
             path = home / ".local" / "state" / "ai-ping" / "credentials" / (name + ".json")
             self.assertEqual(ping.read_json(path), value)
@@ -428,6 +465,9 @@ fi
         self.assertFalse((home / ".codex").exists())
         self.assertFalse((home / ".claude").exists())
         self.assertFalse((home / ".local" / "state" / "ai-ping" / "ai-ping.log").exists())
+        if use_pipe:
+            self.assertFalse(any(path.is_dir() and path.name.startswith("tmp") for path in self.directory.iterdir()),
+                             "Temporary archive directory was not cleaned")
 
     def test_ping_without_clis_uses_imported_auth_and_minimal_requests(self):
         for provider in ("claude", "codex"):

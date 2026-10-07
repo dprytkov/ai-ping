@@ -254,4 +254,4 @@ tar -czf "$test_root/partial.tar.gz" -C "$test_root/partial" ai-ping-main
 export TEST_ARCHIVE=$test_root/partial.tar.gz
 expect_failure bash "$source_directory/install.sh" --start 08:00
 pass 'Download/install path, local archives, download/empty/corrupt/missing-setup failures and cleanup'
-echo 'All Ubuntu shell checks passed; no network requests or real cron changes were made.'
+echo 'All Linux shell checks passed; no network requests or real cron changes were made.'

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Ubuntu ping implementation. Uses only the Python standard library."""
+"""Linux ping implementation. Uses only the Python standard library."""
 # Copyright (c) 2026 dprytkov. SPDX-License-Identifier: MIT
 
 import base64

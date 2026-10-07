@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install for the current Ubuntu user and replace only the AI Ping cron block.
+# Install for the current Linux user and replace only the AI Ping cron block.
 # Copyright (c) 2026 dprytkov. SPDX-License-Identifier: MIT
 set -euo pipefail
 umask 077
@@ -38,8 +38,8 @@ done
 [[ $HOME != *$'\n'* && $HOME != *$'\r'* ]] || fail 'HOME contains a line break.'
 # sudo would schedule against the wrong account and credentials.
 [[ -z ${SUDO_USER:-} ]] || fail 'Run the installer as your normal user without sudo.'
-for tool in python3 crontab flock install date; do
-    command -v "$tool" >/dev/null 2>&1 || fail "$tool not found. Install dependencies: sudo apt install python3 cron util-linux"
+for tool in python3 crontab flock install date awk grep mktemp mkdir chmod; do
+    command -v "$tool" >/dev/null 2>&1 || fail "$tool not found. Install the Linux dependencies listed in README.md with your distribution's package manager."
 done
 if [[ -z $start ]]; then
     if [[ -t 0 ]]; then
@@ -108,7 +108,7 @@ runner=$target_directory/ai-ping-run
     printf 'export PATH=%q\n' "$target_directory:$PATH"
     printf 'export HOME=%q\n' "$HOME"
     printf 'export TZ=%q\n' "$schedule_timezone"
-    # Ubuntu cron schedules in the daemon's zone. A minute tick plus this
+    # Cron implementations may schedule in the daemon's zone. A minute tick plus this
     # local check keeps Windows wall-clock times even on a UTC Linux server.
     printf 'if [[ ${1:-} = --scheduled ]]; then\n'
     printf '    current_time=$(date +%%H:%%M) || exit 1\n'
@@ -138,10 +138,10 @@ printf '* * * * * %s\n' "$cron_command" >>"$temporary_directory/new-crontab"
 printf '# END AI-PING\n' >>"$temporary_directory/new-crontab"
 crontab "$temporary_directory/new-crontab" || fail 'Cannot install user crontab.'
 
-# Ubuntu's .profile usually adds this directory; also cover non-login Bash.
+# Add the user bin directory for login shells and non-login Bash.
 for profile in "$HOME/.profile" "$HOME/.bashrc"; do
     if ! grep -q '^# BEGIN AI-PING PATH$' "$profile" 2>/dev/null; then
-        # A login Bash reads .profile; Ubuntu's existing .profile may already
+        # A login shell's existing profile may already
         # prepend .local/bin after sourcing .bashrc. Avoid prepending it twice.
         printf '\n# BEGIN AI-PING PATH\n' >>"$profile"
         if [[ $profile = "$HOME/.bashrc" ]]; then
@@ -163,7 +163,7 @@ done
 printf 'OK: installed in %s\n' "$target_directory"
 printf 'Daily schedule (%s): %s\n' "$schedule_timezone" "${times[*]}"
 printf 'Provider: %s\nLog: %s/ai-ping.log\n' "$provider" "$state_directory"
-printf 'Check the cron service: systemctl is-active cron\n'
+printf 'Check that your cron daemon is running (cron or crond, depending on the distribution).\n'
 printf 'Open a new Bash terminal, or run: export PATH="$HOME/.local/bin:$PATH"\n'
 printf 'With installed CLIs, sign in beforehand: claude then /login; codex login.\n'
 printf 'Installation sends no model requests. Re-run to update scripts or schedule.\n'
