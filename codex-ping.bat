@@ -24,6 +24,18 @@ $Ua = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) ' +
     'AppleWebKit/537.36 (KHTML, like Gecko) ' +
     'Chrome/136.0.0.0 Safari/537.36'
 
+function Write-PingFailure {
+    param([string]$Details, [string]$Fallback, [string]$AdditionalDetails)
+
+    # A generic HTTP 429 can be transient; require a quota marker or message.
+    if ($Details -match '(?i)(?:hit|reached) your (?:usage |session |weekly )?limit|usage_limit_reached|(?:usage|quota) limit (?:has been )?(?:reached|exceeded)|quota (?:exceeded|exhausted)') {
+        Write-Host 'LIMIT: quota exhausted. Try again after reset.' -ForegroundColor Yellow
+    } else {
+        Write-Host $Fallback -ForegroundColor Red
+        if ($AdditionalDetails) { Write-Host $AdditionalDetails }
+    }
+}
+
 function Write-CurrentLogin {
     $login = 'unavailable'
     try {
@@ -173,15 +185,17 @@ function Write-AccountUsage {
 function Invoke-CliPing {
     if (-not (Get-Command codex -ErrorAction SilentlyContinue)) {
         Write-Host 'FAIL: codex not found in PATH, install Codex CLI.' -ForegroundColor Red
+        Write-AccountUsage
         exit 1
     }
     Write-Host 'Falling back to codex exec (token refresh).' -ForegroundColor Yellow
     $events = & codex exec 'Reply: ok' -m $Model `
         -c model_reasoning_effort=low --ignore-user-config `
         --skip-git-repo-check --sandbox read-only --ephemeral `
-        --cd $env:TEMP --color never --json
+        --cd $env:TEMP --color never --json 2>&1
     if ($LASTEXITCODE -ne 0) {
-        Write-Host "FAIL: codex exec exit code $LASTEXITCODE" -ForegroundColor Red
+        Write-PingFailure ($events -join "`n") "FAIL: codex exec exit code $LASTEXITCODE"
+        Write-AccountUsage
         exit 1
     }
     $cliUsage = $null
@@ -257,8 +271,10 @@ try {
         Write-Host "[$stamp] token expired (HTTP 401)." -ForegroundColor Yellow
         Invoke-CliPing
     }
-    Write-Host "[$stamp] FAIL (HTTP $status): $($_.Exception.Message)" -ForegroundColor Red
-    if ($_.ErrorDetails.Message) { Write-Host $_.ErrorDetails.Message }
+    $details = [string]$_.ErrorDetails.Message
+    Write-PingFailure ($_.Exception.Message + "`n" + $details) `
+        "[$stamp] FAIL (HTTP $status): $($_.Exception.Message)" $details
+    Write-AccountUsage
     exit 1
 }
 
@@ -268,21 +284,32 @@ $content = if ($resp.Content -is [byte[]]) {
 } else {
     [string]$resp.Content
 }
-$answer = ''; $usage = $null; $err = $null
+$answer = ''; $usage = $null; $err = $null; $errorCode = $null
 foreach ($line in ($content -split "`n")) {
     if (-not $line.StartsWith('data: ')) { continue }
     try { $e = $line.Substring(6) | ConvertFrom-Json } catch { continue }
     switch ($e.type) {
         'response.output_text.done' { $answer = $e.text }
         'response.completed'        { $usage = $e.response.usage }
-        'response.failed'           { $err = $e.response.error.message }
-        'error'                     { $err = $e.message }
+        'response.failed'           {
+            $err = $e.response.error.message
+            $errorCode = (@($e.response.error.code, $e.response.error.type)) -join ' '
+        }
+        'error'                     {
+            $err = $e.message
+            $errorCode = $e.code
+            if ($e.error) {
+                $err = $e.error.message
+                $errorCode = (@($e.error.code, $e.error.type)) -join ' '
+            }
+        }
     }
 }
 
-if ($err -or -not $usage) {
+if ($err -or $errorCode -or -not $usage) {
     if (-not $err) { $err = 'No completed response with usage received.' }
-    Write-Host "[$stamp] FAIL: $err" -ForegroundColor Red
+    Write-PingFailure ($errorCode + "`n" + $err) "[$stamp] FAIL: $err"
+    Write-AccountUsage
     exit 1
 }
 

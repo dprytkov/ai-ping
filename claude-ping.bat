@@ -17,6 +17,18 @@ exit /b %ERRORLEVEL%
 
 $ProgressPreference = 'SilentlyContinue'
 $Model = $env:PING_MODEL
+$pingCompleted = $false
+
+function Write-PingFailure {
+    param([string]$Details, [string]$Fallback)
+
+    # Recognize subscription exhaustion without treating every CLI error as a limit.
+    if ($Details -match '(?i)(?:hit|reached) your (?:usage |session |weekly )?limit|usage_limit_reached|(?:usage|quota) limit (?:has been )?(?:reached|exceeded)|quota (?:exceeded|exhausted)') {
+        Write-Host 'LIMIT: quota exhausted. Try again after reset.' -ForegroundColor Yellow
+    } else {
+        Write-Host $Fallback -ForegroundColor Red
+    }
+}
 
 function Write-CurrentLogin {
     param([Diagnostics.ProcessStartInfo]$StartInfo, [string]$CliPath)
@@ -190,6 +202,7 @@ try {
     $start.UseShellExecute = $false
     $start.CreateNoWindow = $true
     $start.RedirectStandardOutput = $true
+    $start.RedirectStandardError = $true
     $start.StandardOutputEncoding = [Text.Encoding]::UTF8
     $start.EnvironmentVariables['MAX_THINKING_TOKENS'] = '0'
     $start.EnvironmentVariables['CLAUDE_CODE_EFFORT_LEVEL'] = 'low'
@@ -197,19 +210,30 @@ try {
     $process.StartInfo = $start
     try {
         [void]$process.Start()
+        $errorTask = $process.StandardError.ReadToEndAsync()
         $output = $process.StandardOutput.ReadToEnd()
         $process.WaitForExit()
         $code = $process.ExitCode
+        $errorOutput = $errorTask.Result
     } finally {
         $process.Dispose()
     }
+    $pingCompleted = $true
+    $result = $null
+    try { $result = $output | ConvertFrom-Json -ErrorAction Stop } catch {
+        if ($code -eq 0) { throw }
+    }
+    $failureDetails = if ($result) {
+        (@($result.result) + @($result.errors) + @($errorOutput)) -join "`n"
+    } else {
+        $output + "`n" + $errorOutput
+    }
     if ($code -ne 0) {
-        Write-Host "FAIL: claude exit code $code" -ForegroundColor Red
+        Write-PingFailure $failureDetails "FAIL: claude exit code $code"
         exit 1
     }
-    $result = $output | ConvertFrom-Json -ErrorAction Stop
     if ($result.type -ne 'result' -or $result.is_error -or $result.subtype -ne 'success') {
-        Write-Host 'FAIL: Claude Code did not return a successful result' -ForegroundColor Red
+        Write-PingFailure $failureDetails 'FAIL: Claude Code did not return a successful result'
         exit 1
     }
     $answer = ([string]$result.result).Trim()
@@ -217,9 +241,11 @@ try {
     Write-CurrentLogin $start $cli.Source
     Write-Host "  model=$Model" -ForegroundColor Cyan
     Write-TokenUsage $result.usage
-    Write-AccountUsage
     exit 0
 } catch {
     Write-Host 'FAIL: cannot run Claude Code or parse its JSON response' -ForegroundColor Red
     exit 1
+} finally {
+    # A rejected ping still needs quota reset times; keep its failure exit code.
+    if ($pingCompleted) { Write-AccountUsage }
 }

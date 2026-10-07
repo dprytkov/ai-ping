@@ -43,7 +43,18 @@ public class MockClaude {
             Environment.GetEnvironmentVariable("TEMP").TrimEnd('\\'), StringComparison.OrdinalIgnoreCase)) return 93;
         if (Environment.GetEnvironmentVariable("MAX_THINKING_TOKENS") != "0" ||
             Environment.GetEnvironmentVariable("CLAUDE_CODE_EFFORT_LEVEL") != "low") return 94;
-        if (scenario == "cli-failure" || scenario == "no-login") return 7;
+        if (scenario == "cli-failure" || scenario == "cli-failure-full-quota" || scenario == "no-login") return 7;
+        if (scenario.StartsWith("rate-limit") || scenario == "weekly-rate-limit") {
+            if (scenario == "rate-limit-refresh") {
+                File.WriteAllText(Path.Combine(Environment.GetEnvironmentVariable("CLAUDE_CONFIG_DIR"), ".credentials.json"),
+                    "{\"claudeAiOauth\":{\"accessToken\":\"refreshed-test-token\"}}");
+            }
+            if (scenario == "rate-limit-stderr") {
+                Console.Error.WriteLine("You've hit your session limit. Try again after reset."); return 1;
+            }
+            Console.WriteLine("{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":true,\"result\":\"You've hit your limit. Try again after reset.\"}");
+            return scenario == "rate-limit-zero" ? 0 : 1;
+        }
         if (scenario == "invalid-result") { Console.WriteLine("not json"); return 0; }
         if (scenario == "error-result") {
             Console.WriteLine("{\"type\":\"result\",\"subtype\":\"error_during_execution\",\"is_error\":true}"); return 0;
@@ -96,9 +107,9 @@ function Invoke-WebRequest {
         $Headers['anthropic-beta'] -ne 'oauth-2025-04-20' -or $UserAgent -ne 'ai-ping/1.0') {
         throw 'Unexpected usage request'
     }
-    $token = if ($Scenario -eq 'refresh') { 'refreshed-test-token' } else { 'test-token' }
+    $token = if ($Scenario -in @('refresh', 'rate-limit-refresh')) { 'refreshed-test-token' } else { 'test-token' }
     if ($Headers.Authorization -ne "Bearer $token") { throw 'Stale authentication used' }
-    if ($Scenario -eq 'network-error') { throw 'Mock network error' }
+    if ($Scenario -in @('network-error', 'rate-limit-usage-error')) { throw 'Mock network error' }
     if ($Scenario -in @('http-401', 'http-429')) {
         $errorRecord = New-Object System.Management.Automation.ErrorRecord (
             (New-Object Exception 'Mock HTTP error'), 'mock-http',
@@ -109,6 +120,8 @@ function Invoke-WebRequest {
     if ($Scenario -eq 'invalid-usage') { return [pscustomobject]@{ Content = 'not json' } }
     $session = @{ utilization = 12.5; resets_at = '2033-05-18T03:33:20.000000+00:00' }
     $weekly = @{ utilization = 35; resets_at = '2033-05-19T07:20:00Z' }
+    if ($Scenario -like 'rate-limit*' -or $Scenario -eq 'cli-failure-full-quota') { $session.utilization = 100 }
+    if ($Scenario -eq 'weekly-rate-limit') { $weekly.utilization = 100 }
     if ($Scenario -eq 'weekly-only') { $session = $null }
     if ($Scenario -eq 'no-windows') { $session = $null; $weekly = $null }
     if ($Scenario -eq 'unknown-values') { $session = @{ utilization = $null; resets_at = $null } }
@@ -139,6 +152,7 @@ iex ([IO.File]::ReadAllText($ScriptPath))
         $ErrorActionPreference = 'Stop'
     }
     $passed = $actualExit -eq $ExitCode
+    if ([regex]::Matches($actual, '(?m)^  LIMITS\s*$').Count -gt 1) { $passed = $false }
     foreach ($expected in $Contains) { if ($actual -notlike "*$expected*") { $passed = $false } }
     foreach ($unexpected in ($Absent + @('Bearer ', 'test-token', 'refreshed-test-token',
         'must-not-print-auth-secret', 'auth-status-secret'))) {
@@ -176,9 +190,28 @@ try {
     }
     Test-Ping 'Usage HTTP 401' 'http-401' -Contains @("OK: 'ok'", 'model=haiku', 'WARN: limits unavailable (HTTP 401)')
     Test-Ping 'Usage HTTP 429' 'http-429' -Contains @("OK: 'ok'", 'model=haiku', 'WARN: limits unavailable (HTTP 429)')
-    foreach ($scenario in @('cli-failure', 'no-login', 'invalid-result', 'error-result', 'missing-cli')) {
-        Test-Ping "Ping failure: $scenario" $scenario -ExitCode 1 -Contains @('FAIL:') -Absent @('OK:', 'weekly')
+    foreach ($scenario in @('rate-limit', 'rate-limit-refresh', 'rate-limit-stderr', 'rate-limit-zero')) {
+        Test-Ping "Exhausted quota: $scenario" $scenario -ExitCode 1 -Contains @(
+            'LIMIT: quota exhausted.', '5-hour', 'used=100%', 'remaining=0%', 'weekly', 'used=35%', 'resets=2033-', 'in ') `
+            -Absent @('FAIL:', 'OK:', 'TOKENS', 'WARN:')
     }
+    Test-Ping 'Exhausted weekly quota with explicit model' 'weekly-rate-limit' -Model 'sonnet' -ExitCode 1 -Contains @(
+        'LIMIT: quota exhausted.', '5-hour', 'used=12.5%', 'weekly', 'used=100%', 'remaining=0%', 'resets=2033-', 'in ') `
+        -Absent @('FAIL:', 'OK:', 'TOKENS', 'WARN:')
+    Test-Ping 'Quota failure preserves ping failure' 'rate-limit-usage-error' -ExitCode 1 -Contains @(
+        'LIMIT: quota exhausted.', 'WARN: limits unavailable') -Absent @('FAIL:', 'OK:', 'TOKENS', 'weekly')
+    Test-Ping 'Failed ping through real batch entry' 'rate-limit' -BatchEntry -ExitCode 1 -Contains @(
+        'LIMIT: quota exhausted.', 'WARN: limits unavailable') -Absent @('FAIL:', 'OK:', 'TOKENS')
+    Test-Ping 'Generic CLI failure is not hidden by exhausted quota' 'cli-failure-full-quota' -ExitCode 1 -Contains @(
+        'FAIL: claude exit code 7', 'used=100%', 'remaining=0%', 'weekly') -Absent @('LIMIT:', 'OK:', 'TOKENS')
+    foreach ($scenario in @('cli-failure', 'no-login', 'invalid-result', 'error-result')) {
+        Test-Ping "Ping failure still shows quotas: $scenario" $scenario -ExitCode 1 -Contains @('FAIL:', 'weekly') `
+            -Absent @('OK:', 'TOKENS', 'WARN:')
+    }
+    Test-Ping 'Missing CLI skips quotas' 'missing-cli' -ExitCode 1 -Contains @('FAIL: claude not found') `
+        -Absent @('OK:', 'weekly', 'WARN:')
+    Test-Ping 'Invalid model skips quotas' 'success' -Model 'bad model' -ExitCode 1 -Contains @('FAIL: invalid model name') `
+        -Absent @('OK:', 'weekly', 'WARN:')
     foreach ($scenario in @('login-error', 'login-invalid-json', 'login-no-email', 'login-not-signed-in', 'login-invalid-email', 'login-trailing-newline')) {
         Test-Ping "Optional login: $scenario" $scenario -Contains @("OK: 'ok'", 'login=unavailable', 'weekly')
     }

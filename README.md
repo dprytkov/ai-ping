@@ -188,6 +188,8 @@ Claude adds uncached input, cache writes, cache reads, and output to get `total`
 
 **Exit codes:** `0` means success; `1` means failure. If the ping succeeds but quota statistics are unavailable, a warning is printed and the exit code remains `0`.
 
+On Windows, both pings retrieve quota statistics after a failed request. When the provider reports exhausted usage limits, they print `LIMIT: quota exhausted. Try again after reset.` followed by `LIMITS` with remaining percentages and server reset times. Other failures keep `FAIL`; unavailable statistics produce a warning. The exit code stays `1` because the ping did not succeed.
+
 ## Scheduling
 
 Example: run Claude Ping daily at **07:00 local time** while signed in to Windows. Run in PowerShell:

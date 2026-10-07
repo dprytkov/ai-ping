@@ -54,19 +54,34 @@ function Invoke-WebRequest {
             $payload.input[0].content[0].text -ne 'Reply: ok') {
             throw 'Ping payload changed unexpectedly.'
         }
-        if ($Scenario -in @('fallback', 'cli-failure', 'missing-cli')) {
+        if ($Scenario -in @('fallback', 'cli-failure', 'cli-limit', 'cli-limit-stderr', 'missing-cli')) {
             $errorRecord = New-Object System.Management.Automation.ErrorRecord (
                 (New-Object Exception 'Unauthorized'), 'mock-http',
                 [System.Management.Automation.ErrorCategory]::InvalidOperation, $null)
             $errorRecord.Exception | Add-Member NoteProperty Response ([pscustomobject]@{ StatusCode = 401 })
             throw $errorRecord
         }
-        if ($Scenario -eq 'http-error') {
+        if ($Scenario -in @('http-error', 'http-429', 'weekly-http-429', 'http-429-usage-error', 'transient-429')) {
+            $status = if ($Scenario -eq 'http-error') { 403 } else { 429 }
             $errorRecord = New-Object System.Management.Automation.ErrorRecord (
-                (New-Object Exception 'Forbidden'), 'mock-http',
+                (New-Object Exception 'Mock HTTP failure'), 'mock-http',
                 [System.Management.Automation.ErrorCategory]::InvalidOperation, $null)
-            $errorRecord.Exception | Add-Member NoteProperty Response ([pscustomobject]@{ StatusCode = 403 })
+            $errorRecord.Exception | Add-Member NoteProperty Response ([pscustomobject]@{ StatusCode = $status })
+            if ($status -eq 429) {
+                $details = if ($Scenario -eq 'transient-429') {
+                    '{"error":{"type":"rate_limit_exceeded","message":"Too many requests"}}'
+                } else {
+                    '{"error":{"type":"usage_limit_reached","message":"The usage limit has been reached"}}'
+                }
+                $errorRecord.ErrorDetails = New-Object System.Management.Automation.ErrorDetails $details
+            }
             throw $errorRecord
+        }
+        if ($Scenario -eq 'stream-limit') {
+            return [pscustomobject]@{ Content = 'data: {"type":"response.failed","response":{"error":{"code":"usage_limit_reached","message":"Request rejected"}}}' }
+        }
+        if ($Scenario -eq 'nested-stream-limit') {
+            return [pscustomobject]@{ Content = 'data: {"type":"error","error":{"type":"usage_limit_reached","message":"Request rejected"}}' }
         }
         if ($Scenario -eq 'stream-error') {
             return [pscustomobject]@{ Content = 'data: {"type":"response.failed","response":{"error":{"message":"Mock failure"}}}' }
@@ -84,14 +99,24 @@ function Invoke-WebRequest {
             throw 'Usage must use a JSON GET request.'
         }
         if ($global:postCalls -ne 1) { throw 'Unexpected extra ping request.' }
-        if ($Scenario -eq 'fallback' -and $Headers.Authorization -ne 'Bearer refreshed-test-token') {
+        if ($Scenario -in @('fallback', 'cli-limit', 'cli-limit-stderr') -and $Headers.Authorization -ne 'Bearer refreshed-test-token') {
             throw 'Usage did not reload refreshed authentication.'
+        }
+        if ($Scenario -in @('missing-cli', 'http-429-usage-error')) {
+            $status = if ($Scenario -eq 'missing-cli') { 401 } else { 429 }
+            $errorRecord = New-Object System.Management.Automation.ErrorRecord (
+                (New-Object Exception 'Mock usage HTTP failure'), 'mock-http',
+                [System.Management.Automation.ErrorCategory]::InvalidOperation, $null)
+            $errorRecord.Exception | Add-Member NoteProperty Response ([pscustomobject]@{ StatusCode = $status })
+            throw $errorRecord
         }
         if ($Scenario -eq 'usage-error') { throw 'Mock usage unavailable' }
         if ($Scenario -eq 'usage-invalid') { return [pscustomobject]@{ Content = 'not json' } }
         if ($Scenario -eq 'no-windows') { return [pscustomobject]@{ Content = '{"plan_type":"plus","rate_limit":null}' } }
         $session = @{ used_percent = 12; limit_window_seconds = 18000; reset_at = 2000000000 }
         $weekly = @{ used_percent = 35; limit_window_seconds = 604800; reset_at = 2000100000 }
+        if ($Scenario -in @('http-429', 'stream-limit', 'nested-stream-limit', 'cli-limit', 'cli-limit-stderr')) { $session.used_percent = 100 }
+        if ($Scenario -eq 'weekly-http-429') { $weekly.used_percent = 100 }
         if ($Scenario -eq 'weekly-only') { $session = $weekly; $weekly = $null }
         if ($Scenario -eq 'reversed') { $session, $weekly = $weekly, $session }
         if ($Scenario -eq 'unknown-reset') { $session.reset_at = $null; $session.used_percent = $null }
@@ -113,6 +138,15 @@ function codex {
     $payload = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($json)).TrimEnd('=').Replace('+', '-').Replace('/', '_')
     @{ tokens = @{ access_token = 'refreshed-test-token'; account_id = 'test-account'; id_token = "e30.$payload.test-signature" } } |
         ConvertTo-Json | Set-Content -LiteralPath (Join-Path $ProfilePath '.codex\auth.json')
+    if ($Scenario -in @('cli-limit', 'cli-limit-stderr')) {
+        if ($Scenario -eq 'cli-limit-stderr') {
+            Write-Error 'You have hit your usage limit. Try again after reset.' -ErrorAction Continue
+        } else {
+            '{"type":"turn.failed","error":{"message":"You have hit your usage limit. Try again after reset."}}'
+        }
+        $global:LASTEXITCODE = 1
+        return
+    }
     $global:LASTEXITCODE = 0
     'not a JSON event'
     '{"type":"item.completed","item":{"type":"agent_message","text":"ok"}}'
@@ -134,6 +168,7 @@ iex ([IO.File]::ReadAllText($ScriptPath))
         $ErrorActionPreference = 'Stop'
     }
     $passed = $actualExit -eq $ExitCode
+    if ([regex]::Matches($actual, '(?m)^  LIMITS(?:  plan=\S+)?\s*$').Count -gt 1) { $passed = $false }
     foreach ($expected in $Contains) {
         if ($actual -notlike "*$expected*") { $passed = $false }
     }
@@ -168,14 +203,39 @@ try {
     foreach ($scenario in @('no-id-token', 'malformed-id-token', 'invalid-login', 'trailing-newline-login')) {
         Test-Ping "Optional login: $scenario" $scenario -Contains @("OK: 'ok'", 'login=unavailable', 'weekly')
     }
-    Test-Ping 'CLI failure' 'cli-failure' -ExitCode 1 -Contains @('codex exec exit code 7') -Absent @('weekly')
-    Test-Ping 'Missing CLI on fallback' 'missing-cli' -ExitCode 1 -Contains @('codex not found')
-    Test-Ping 'Missing authentication' 'missing-auth' -ExitCode 1 -Contains @('run: codex login')
-    Test-Ping 'Missing token' 'missing-token' -ExitCode 1 -Contains @('no ChatGPT token')
-    Test-Ping 'Invalid authentication JSON' 'invalid-auth' -ExitCode 1 -Contains @('cannot read auth.json')
-    Test-Ping 'HTTP 403 does not invoke fallback' 'http-error' -ExitCode 1 -Contains @('HTTP 403') -Absent @('Falling back')
-    Test-Ping 'Failed streaming response' 'stream-error' -ExitCode 1 -Contains @('FAIL: Mock failure')
-    Test-Ping 'Incomplete streaming response' 'incomplete' -ExitCode 1 -Contains @('No completed response')
+    Test-Ping 'HTTP 429 shows exhausted quota without fallback' 'http-429' -ExitCode 1 -Contains @(
+        'LIMIT: quota exhausted.', '5-hour', 'used=100%', 'remaining=0%', 'weekly', 'resets=2033-', 'in ') `
+        -Absent @('FAIL', 'Falling back', 'OK:', 'TOKENS', 'WARN:', 'usage_limit_reached')
+    Test-Ping 'HTTP 429 shows exhausted weekly quota with explicit model' 'weekly-http-429' -Model 'gpt-5.6-sol' -ExitCode 1 -Contains @(
+        'LIMIT: quota exhausted.', '5-hour', 'used=12%', 'weekly', 'used=100%', 'remaining=0%', 'resets=2033-', 'in ') `
+        -Absent @('FAIL', 'Falling back', 'OK:', 'TOKENS', 'WARN:', 'usage_limit_reached')
+    foreach ($scenario in @('stream-limit', 'nested-stream-limit')) {
+        Test-Ping "Streaming quota message: $scenario" $scenario -ExitCode 1 -Contains @(
+            'LIMIT: quota exhausted.', '5-hour', 'used=100%', 'remaining=0%', 'weekly', 'resets=2033-', 'in ') `
+            -Absent @('FAIL', 'OK:', 'TOKENS', 'WARN:', 'Request rejected')
+    }
+    foreach ($scenario in @('cli-limit', 'cli-limit-stderr')) {
+        Test-Ping "CLI quota message with refreshed auth: $scenario" $scenario -ExitCode 1 -Contains @(
+            'LIMIT: quota exhausted.', '5-hour', 'used=100%', 'remaining=0%', 'weekly', 'resets=2033-', 'in ') `
+            -Absent @('FAIL', 'OK:', 'TOKENS', 'WARN:', 'Write-Error', 'turn.failed')
+    }
+    Test-Ping 'Usage HTTP 429 preserves failed ping' 'http-429-usage-error' -ExitCode 1 -Contains @(
+        'LIMIT: quota exhausted.', 'WARN: limits unavailable (HTTP 429)') -Absent @('FAIL', 'OK:', 'TOKENS')
+    Test-Ping 'Transient HTTP 429 stays a real failure' 'transient-429' -ExitCode 1 -Contains @(
+        'FAIL (HTTP 429)', 'Too many requests', 'weekly') -Absent @('LIMIT:', 'OK:', 'Falling back')
+    Test-Ping 'CLI failure still shows quotas' 'cli-failure' -ExitCode 1 -Contains @('codex exec exit code 7', 'weekly') `
+        -Absent @('OK:', 'TOKENS', 'WARN:')
+    Test-Ping 'Missing CLI on fallback reports unavailable quota' 'missing-cli' -ExitCode 1 -Contains @(
+        'codex not found', 'WARN: limits unavailable (HTTP 401)') -Absent @('OK:', 'TOKENS', 'weekly')
+    Test-Ping 'Missing authentication' 'missing-auth' -ExitCode 1 -Contains @('run: codex login') -Absent @('WARN:', 'weekly')
+    Test-Ping 'Missing token' 'missing-token' -ExitCode 1 -Contains @('no ChatGPT token') -Absent @('WARN:', 'weekly')
+    Test-Ping 'Invalid authentication JSON' 'invalid-auth' -ExitCode 1 -Contains @('cannot read auth.json') -Absent @('WARN:', 'weekly')
+    Test-Ping 'HTTP 403 does not invoke fallback' 'http-error' -ExitCode 1 -Contains @('HTTP 403', 'weekly') `
+        -Absent @('Falling back', 'OK:', 'TOKENS', 'WARN:')
+    Test-Ping 'Failed streaming response' 'stream-error' -ExitCode 1 -Contains @('FAIL: Mock failure', 'weekly') `
+        -Absent @('OK:', 'TOKENS', 'WARN:')
+    Test-Ping 'Incomplete streaming response' 'incomplete' -ExitCode 1 -Contains @('No completed response', 'weekly') `
+        -Absent @('OK:', 'TOKENS', 'WARN:')
 } finally {
     $resolvedRoot = [IO.Path]::GetFullPath($testRoot)
     $workspacePrefix = [IO.Path]::GetFullPath($PSScriptRoot).TrimEnd('\') + '\'
