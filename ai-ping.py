@@ -62,6 +62,11 @@ def authorization_data(provider, value):
             if not isinstance(token, str) or not re.fullmatch(r"[a-zA-Z0-9._~+/-]+=*", token):
                 raise ValueError("Invalid token field")
             kept[field] = token
+    if provider == "claude" and "scopes" in tokens:
+        scopes = tokens["scopes"]
+        if not isinstance(scopes, list) or not all(isinstance(scope, str) for scope in scopes):
+            raise ValueError("Invalid authorization scopes")
+        kept["scopes"] = scopes
     return {key: kept}
 
 
@@ -126,10 +131,11 @@ def setup_authorization(provider):
         print(f"\n{name} is not installed on Linux. Copy authorization from your Windows computer:")
         print("1. Open Start, type PowerShell and open it (administrator rights are not needed).")
         if name == "claude":
-            print("2. Sign in there: run claude, enter /login, then exit Claude Code.")
-            print("3. Paste this command into PowerShell and press Enter; it copies authorization to the clipboard:")
+            print("2. For scheduled pings, run claude setup-token and approve access in the browser.")
+            print("3. Copy the printed one-year token. It permits model requests; account limits are unavailable.")
+            print("Alternatively, sign in with claude /login and copy the short-lived login JSON for account limits:")
             print("$aiPingAuthDir = if ($env:CLAUDE_CONFIG_DIR) { $env:CLAUDE_CONFIG_DIR } else { Join-Path $env:USERPROFILE '.claude' }; Get-Content -Raw -LiteralPath (Join-Path $aiPingAuthDir '.credentials.json') | ConvertFrom-Json | ConvertTo-Json -Depth 20 -Compress | Set-Clipboard")
-            print("If the file is missing, run claude setup-token on Windows and copy the token it prints instead.")
+            print("Copied login JSON expires unless renewed. With Claude CLI on Linux, sign in there for automatic refresh.")
         else:
             print("2. Sign in there: run codex login with your ChatGPT account.")
             print("3. Paste this command into PowerShell and press Enter; it copies authorization to the clipboard:")
@@ -150,7 +156,8 @@ def setup_authorization(provider):
             if not pasted and existing:
                 break
             try:
-                value = ({"accessToken": pasted} if name == "claude" and pasted.startswith("sk-ant-oat")
+                value = ({"accessToken": pasted, "scopes": ["user:inference"]}
+                         if name == "claude" and pasted.startswith("sk-ant-oat")
                          else json.loads(pasted))
                 pending.append((name, authorization_data(name, value)))
                 break
@@ -161,7 +168,7 @@ def setup_authorization(provider):
         save_authorization(name, value)
         print(f"OK: {name} authorization saved for your Linux user (file permissions: 600).")
     if pending:
-        print("Imported tokens are not refreshed automatically. If they expire, sign in on Windows and re-run setup to paste fresh text.")
+        print("Imported tokens are not refreshed automatically. If they expire, create fresh authorization on Windows and re-run setup.")
     return 0
 
 
@@ -420,6 +427,10 @@ def write_window(window, name, provider):
 def write_limits(provider):
     try:
         if provider == "claude":
+            tokens = authorization_data("claude", read_json(auth_path("claude")))["claudeAiOauth"]
+            if set(tokens.get("scopes", [])) == {"user:inference"}:
+                print("\n  LIMITS\n  unavailable (setup-token permits model requests only).")
+                return
             headers = dict(claude_headers(), Accept="application/json")
             usage = json.loads(request("https://api.anthropic.com/api/oauth/usage", headers, timeout=10))
             windows = [(usage.get("five_hour"), "5-hour"), (usage.get("seven_day"), "weekly")]

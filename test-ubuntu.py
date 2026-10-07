@@ -237,7 +237,8 @@ class PingTests(unittest.TestCase):
 
     def test_import_prompts_copy_instructions_and_private_storage(self):
         native = {name: ping.auth_path(name).read_bytes() for name in ("claude", "codex")}
-        claude = {"claudeAiOauth": {"accessToken": "offline-claude-secret", "refreshToken": "discard-refresh"}}
+        claude = {"claudeAiOauth": {"accessToken": "offline-claude-secret", "refreshToken": "discard-refresh",
+                                   "scopes": ["user:inference", "user:profile"]}}
         codex = {"tokens": {"access_token": "offline-codex-secret", "account_id": "offline-account",
                             "id_token": "x.e30.x", "refresh_token": "discard-refresh"}, "OPENAI_API_KEY": "discard-key"}
         output = io.StringIO()
@@ -251,6 +252,8 @@ class PingTests(unittest.TestCase):
                 self.assertEqual(ping.auth_path(name), ping.imported_auth_path(name))
                 saved = ping.read_json(ping.auth_path(name))
                 self.assertNotIn("discard", json.dumps(saved))
+                if name == "claude":
+                    self.assertEqual(saved["claudeAiOauth"]["scopes"], ["user:inference", "user:profile"])
                 if os.name == "posix":
                     self.assertEqual(ping.auth_path(name).stat().st_mode & 0o777, 0o600)
                     self.assertEqual(ping.auth_path(name).parent.stat().st_mode & 0o777, 0o700)
@@ -280,7 +283,9 @@ class PingTests(unittest.TestCase):
         self.assertNotIn("sk-proj-key", output.getvalue())
         for value in ({"tokens": {"access_token": "x\nAuthorization: secret"}},
                       {"tokens": {"access_token": 42}}, {"tokens": {"access_token": "x", "account_id": []}},
-                      {"OPENAI_API_KEY": "sk-key"}, {"claudeAiOauth": {"accessToken": "sk-ant-api03-key"}}, None):
+                      {"OPENAI_API_KEY": "sk-key"}, {"claudeAiOauth": {"accessToken": "sk-ant-api03-key"}},
+                      {"claudeAiOauth": {"accessToken": "offline-token", "scopes": "user:inference"}},
+                      {"claudeAiOauth": {"accessToken": "offline-token", "scopes": [42]}}, None):
             name = "claude" if isinstance(value, dict) and "claudeAiOauth" in value else "codex"
             with self.assertRaises(ValueError):
                 ping.authorization_data(name, value)
@@ -316,12 +321,34 @@ class PingTests(unittest.TestCase):
                 contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(ping.main(["--setup-auth", "claude"]), 0)
         saved = ping.imported_auth_path("claude").read_bytes()
+        self.assertEqual(json.loads(saved)["claudeAiOauth"]["scopes"], ["user:inference"])
         with patch.object(ping.shutil, "which", return_value=None), \
                 patch.object(ping.sys.stdin, "isatty", return_value=True), \
                 patch.object(ping.getpass, "getpass", return_value=""), \
                 contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(ping.main(["--setup-auth", "claude"]), 0)
         self.assertEqual(ping.imported_auth_path("claude").read_bytes(), saved)
+
+    def test_setup_token_pings_without_requesting_unavailable_limits(self):
+        token = "sk-ant-oat01-offline-long-lived-secret"
+        ping.save_authorization("claude", ping.authorization_data("claude", {
+            "accessToken": token, "scopes": ["user:inference"],
+        }))
+        def response(url, headers, body=None, timeout=30):
+            self.assertEqual(url, "https://api.anthropic.com/v1/messages")
+            self.assertEqual(headers["Authorization"], "Bearer " + token)
+            self.assertIsNotNone(body)
+            return json.dumps({"type": "message", "content": [{"type": "text", "text": "ok"}],
+                               "usage": CLAUDE_USAGE, "stop_reason": "end_turn"})
+        with patch.object(ping.shutil, "which", return_value=None):
+            code, output, http, cli = self.execute(["claude"], response)
+        self.assertEqual(code, 0)
+        self.assertEqual(http.call_count, 1)
+        self.assertIn("OK: 'ok'", output)
+        self.assertIn("setup-token permits model requests only", output)
+        self.assertNotIn("WARN:", output)
+        self.assertNotIn(token, output)
+        cli.assert_not_called()
 
     @unittest.skipUnless(os.name == "posix", "A Linux terminal is required")
     def test_real_installer_prompts_hide_tokens_and_save_selected_providers(self):

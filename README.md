@@ -99,13 +99,15 @@ Scheduled models can be set with `--claude-model sonnet --codex-model gpt-5.6-so
 
 For each selected CLI that is missing on Linux, setup shows the Windows copy command and asks for the resulting text. Open **Start → PowerShell** on the Windows computer where you already use that account; administrator rights are not needed.
 
-**Claude:** run `claude`, enter `/login`, sign in and exit Claude Code. Then paste this command into PowerShell and press Enter:
+**Claude (recommended for cron without a Linux CLI):** run `claude setup-token` in PowerShell and approve access in the browser. Copy the printed token and paste it into the Linux setup prompt. This token lasts one year and permits model requests; AI Ping skips quota lookup and reports that account limits are unavailable. [Long-lived Claude tokens](https://code.claude.com/docs/en/authentication#generate-a-long-lived-token).
+
+To include account limits, you can instead import the short-lived login JSON: run `claude`, enter `/login`, sign in and exit Claude Code. Then paste this command into PowerShell and press Enter:
 
 ```powershell
 $aiPingAuthDir = if ($env:CLAUDE_CONFIG_DIR) { $env:CLAUDE_CONFIG_DIR } else { Join-Path $env:USERPROFILE '.claude' }; Get-Content -Raw -LiteralPath (Join-Path $aiPingAuthDir '.credentials.json') | ConvertFrom-Json | ConvertTo-Json -Depth 20 -Compress | Set-Clipboard
 ```
 
-This copies `%USERPROFILE%\.claude\.credentials.json` as one line. If the file is missing, run `claude setup-token` on Windows and copy the token it prints instead. [Claude credential storage](https://code.claude.com/docs/en/authentication).
+This copies `%USERPROFILE%\.claude\.credentials.json` as one line. Its access token expires independently of the copied file and is not refreshed without Claude CLI on Linux. For unattended runs with account limits, install Claude CLI on Linux and sign in there so it can refresh the login. [Claude credential storage](https://code.claude.com/docs/en/authentication).
 
 **Codex:** run `codex login` and sign in with ChatGPT. Then paste this command into PowerShell:
 
@@ -117,7 +119,7 @@ This copies `%USERPROFILE%\.codex\auth.json` as one line. If the file is missing
 
 Return to the Linux setup prompt, paste with **Ctrl+Shift+V** or right-click, and press Enter. The paste is hidden; this is expected. Do this separately when prompted for each provider. Invalid text is rejected without being printed. Press Enter to keep existing credentials on a repeat install, or paste new text to replace the AI Ping copy.
 
-AI Ping saves only the access token and, for Codex, account/identity fields under `~/.local/state/ai-ping/credentials/` with file mode `600` and directory mode `700`. It does not overwrite CLI profiles or save refresh tokens. Treat this text like a password; do not share it or put it in a command argument. Clear the Windows clipboard afterward with `Set-Clipboard -Value ''`. Without a CLI, pings use direct HTTP requests; imported tokens are not refreshed automatically. On HTTP 401, sign in again on Windows and repeat setup to paste fresh authorization. Claude's email is `login=unavailable` without its CLI; quota lookup is attempted as usual. Direct Claude requests support `haiku`, `sonnet`, `opus`, or a full API model ID, with tools and thinking disabled.
+AI Ping saves only the access token, Claude permission scopes when available, and Codex account/identity fields under `~/.local/state/ai-ping/credentials/` with file mode `600` and directory mode `700`. It does not overwrite CLI profiles or save refresh tokens. Treat this text like a password; do not share it or put it in a command argument. Clear the Windows clipboard afterward with `Set-Clipboard -Value ''`. Without a CLI, pings use direct HTTP requests; imported tokens are not refreshed automatically. On HTTP 401, create fresh authorization on Windows and repeat setup: use `claude setup-token` again for a long-lived Claude token. Claude's email is `login=unavailable` without its CLI. A token pasted as a plain string is treated as the inference-only token from `setup-token`, so quota lookup is skipped; login JSON with broader or unknown scopes still requests quota statistics. This applies to manual and scheduled pings, and unavailable limits do not turn a successful ping into a failure. Direct Claude requests support `haiku`, `sonnet`, `opus`, or a full API model ID, with tools and thinking disabled.
 
 ## Windows requirements
 
