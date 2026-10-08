@@ -229,8 +229,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\test-ai-ping.ps1
 Linux checks use isolated homes, mocked crontab/CLI commands, local archives, and HTTP fixtures:
 
 ```bash
-python3 test-ubuntu.py
-bash test-ubuntu.sh
+python3 test-linux.py
+bash test-linux.sh
 ```
 
 [Report a problem](https://github.com/dprytkov/ai-ping/issues) with the command, Windows/CLI versions, and sanitized output. Redact your login email before sharing logs.

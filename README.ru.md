@@ -229,8 +229,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\test-ai-ping.ps1
 Проверки Linux используют отдельные профили, подставные crontab/CLI, локальные архивы и HTTP-ответы:
 
 ```bash
-python3 test-ubuntu.py
-bash test-ubuntu.sh
+python3 test-linux.py
+bash test-linux.sh
 ```
 
 [Сообщите о проблеме](https://github.com/dprytkov/ai-ping/issues), указав команду, версии Windows/CLI и вывод без секретных данных. Перед публикацией логов скройте email в строке `login`.
