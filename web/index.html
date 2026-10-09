@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AI Ping</title>
+  <link rel="stylesheet" href="app.css">
+  <script src="manage.js" defer></script>
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <main>
+    <header><a class="brand" href="./">AI Ping<span class="pulse" aria-hidden="true"></span></a><div class="header-actions"><button type="button" id="logout" class="secondary">Выйти</button></div></header>
+    <nav class="tabs" role="tablist" aria-label="Разделы AI Ping"><button type="button" id="tab-run" role="tab" aria-selected="true" aria-controls="view-run" data-view="run">Запуск</button><button type="button" id="tab-settings" role="tab" aria-selected="false" aria-controls="view-settings" tabindex="-1" data-view="settings">Расписание</button><button type="button" id="tab-accounts" role="tab" aria-selected="false" aria-controls="view-accounts" tabindex="-1" data-view="accounts">Аккаунты</button></nav>
+    <section id="view-run" role="tabpanel" aria-labelledby="tab-run">
+    <div class="intro"><h1>Проверить доступ к AI</h1><p>Запустите короткий запрос к Claude или Codex и получите ответ, расход токенов и доступную статистику лимитов.</p></div>
+    <div class="workspace">
+      <section class="controls" aria-labelledby="run-title">
+        <h2 id="run-title">Запуск вручную</h2>
+        <form id="ping-form">
+          <fieldset><legend>Сервис</legend><div class="providers">
+            <label><input type="radio" name="provider" value="both" checked><span>Оба</span></label>
+            <label><input type="radio" name="provider" value="claude"><span>Claude</span></label>
+            <label><input type="radio" name="provider" value="codex"><span>Codex</span></label>
+          </div></fieldset>
+          <div class="model-field"><label for="claude-account">Аккаунт Claude</label><select id="claude-account" aria-describedby="claude-auth"></select></div>
+          <div class="model-field" id="claude-field"><label for="claude-model">Модель Claude</label><input id="claude-model" name="claude_model" value="haiku" list="claude-models" maxlength="100" required spellcheck="false"><datalist id="claude-models"><option value="haiku"><option value="sonnet"><option value="opus"></datalist><span id="claude-auth" class="account">Проверяем подключение…</span></div>
+          <div class="model-field"><label for="codex-account">Аккаунт Codex</label><select id="codex-account" aria-describedby="codex-auth"></select></div>
+          <div class="model-field" id="codex-field"><label for="codex-model">Модель Codex</label><input id="codex-model" name="codex_model" value="gpt-5.6-luna" list="codex-models" maxlength="100" required spellcheck="false"><datalist id="codex-models"><option value="gpt-5.6-luna"><option value="gpt-5.6-sol"></datalist><span id="codex-auth" class="account">Проверяем подключение…</span></div>
+          <p class="usage-note">Каждый запуск расходует лимит вашей подписки. Обновление журнала запросов к модели не делает.</p>
+          <button id="run" type="submit" disabled><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m7 4 9 6-9 6Z"/></svg><span>Запустить пинг</span></button>
+        </form>
+        <div class="schedule"><h2>По расписанию</h2><p id="schedule">Загружаем расписание…</p><p id="schedule-zone" class="muted">Europe/Moscow</p><p id="next-run" class="muted"></p></div>
+      </section>
+      <section class="result" aria-labelledby="result-title">
+        <div class="section-head"><h2 id="result-title">Результат запуска</h2><span id="job-status" role="status">Готов к запуску</span></div>
+        <div id="error" class="error" role="alert" hidden></div>
+        <div id="empty" class="empty"><svg viewBox="0 0 64 64" aria-hidden="true"><path d="M8 32h11l7-17 12 34 7-17h11"/></svg><h3>Здесь появится ответ</h3><p>Выберите сервис и запустите пинг.<br>Последние проверки по расписанию доступны ниже.</p></div>
+        <pre id="output" tabindex="0" aria-label="Вывод последнего ручного запуска" hidden></pre>
+        <p id="limit-note" class="limit-note">Статистика лимитов зависит от типа авторизации выбранного аккаунта.</p>
+      </section>
+    </div>
+    <section class="history" aria-labelledby="history-title"><div class="section-head"><h2 id="history-title">Общий журнал</h2><button type="button" id="refresh" class="secondary">Обновить журнал</button></div><p class="muted">Ручные запуски и проверки по расписанию · последние 64 КБ</p><pre id="log" tabindex="0" aria-label="Журнал ai-ping">Загружаем журнал…</pre><p id="updated" class="muted"></p></section>
+    </section>
+    <section id="view-settings" role="tabpanel" aria-labelledby="tab-settings" hidden>
+      <div class="intro"><h1>Расписание запусков</h1><p>Общие часы для выбранных аккаунтов. Все пинги выполняются последовательно.</p></div>
+      <form id="settings-form" class="settings-form">
+        <label class="check"><input id="schedule-enabled" type="checkbox">Запускать автоматически</label>
+        <div class="form-grid"><div class="model-field"><label for="schedule-times">Время запусков</label><input id="schedule-times" placeholder="06:00, 11:01, 16:02, 21:03" required><p class="muted">От 1 до 24 разных времён в формате ЧЧ:ММ, через запятую.</p></div><div class="model-field"><label for="schedule-timezone">Часовой пояс</label><input id="schedule-timezone" value="Europe/Moscow" list="timezones" required><datalist id="timezones"><option value="Europe/Moscow"><option value="UTC"></datalist></div></div>
+        <fieldset class="settings-group"><legend>Аккаунты для расписания</legend><div id="scheduled-accounts" class="account-checks"></div></fieldset>
+        <fieldset class="settings-group"><legend>Модели по умолчанию</legend><div class="form-grid"><div class="model-field"><label for="default-claude-model">Модель Claude</label><input id="default-claude-model" list="claude-models" maxlength="100" required></div><div class="model-field"><label for="default-codex-model">Модель Codex</label><input id="default-codex-model" list="codex-models" maxlength="100" required></div></div></fieldset>
+        <fieldset class="settings-group"><legend>Аккаунты для ручного запуска по умолчанию</legend><div class="form-grid"><div class="model-field"><label for="default-claude-account">Аккаунт Claude</label><select id="default-claude-account"></select></div><div class="model-field"><label for="default-codex-account">Аккаунт Codex</label><select id="default-codex-account"></select></div></div></fieldset>
+        <div id="settings-error" class="error" role="alert" hidden></div><p id="settings-message" class="message" role="status"></p><button id="save-settings" type="submit">Сохранить расписание</button>
+      </form>
+    </section>
+    <section id="view-accounts" role="tabpanel" aria-labelledby="tab-accounts" hidden>
+      <div class="intro"><h1>Аккаунты и авторизация</h1><p>Добавляйте подписки Claude и Codex, обновляйте авторизацию и выбирайте аккаунты для запусков.</p></div>
+      <div class="accounts-layout"><section aria-labelledby="accounts-title"><h2 id="accounts-title">Подключённые аккаунты</h2><div id="accounts-list" class="accounts-list"></div></section>
+        <section aria-labelledby="import-title"><h2 id="import-title">Добавить из Windows</h2>
+          <form id="account-form"><input id="account-id" type="hidden"><div class="model-field"><label for="account-provider">Сервис</label><select id="account-provider"><option value="claude">Claude</option><option value="codex">Codex</option></select></div><div class="model-field"><label for="account-name">Имя аккаунта</label><input id="account-name" value="Windows · Claude" maxlength="60" required></div><div class="model-field"><label for="auth-file">Файл авторизации</label><input id="auth-file" type="file" accept=".json,application/json"><p id="auth-path" class="file-help">%USERPROFILE%\.claude\.credentials.json</p></div><div id="setup-token-field" class="model-field"><label for="setup-token">Или setup-token Claude</label><input id="setup-token" type="password" autocomplete="off" placeholder="sk-ant-oat…"><p class="muted">Setup-token выполняет пинги без статистики лимитов.</p></div><p class="usage-note">Для обновления авторизации войдите в нужный аккаунт в Windows и загрузите свежий файл. Импорт не делает запросов к модели.</p><div id="account-error" class="error" role="alert" hidden></div><p id="account-message" class="message" role="status"></p><div class="form-actions"><button id="import-account" type="submit">Добавить аккаунт</button><button id="cancel-account-edit" type="button" class="secondary" hidden>Отменить</button></div></form>
+          <details class="windows-help"><summary>Импортировать текущие аккаунты одним скриптом</summary><p>Скрипт прочитает файлы Claude и Codex в вашем текущем профиле Windows и добавит оба аккаунта. Для подключения понадобится логин и пароль этой панели.</p><a href="Import-WindowsAccounts.ps1" download>Скачать скрипт для Windows</a><p>Сохраните файл, откройте PowerShell в его папке и выполните:</p><code>powershell -NoProfile -ExecutionPolicy Bypass -File .\Import-WindowsAccounts.ps1</code><p class="muted">API-ключи и refresh-токены не переносятся. Подписка на сервере обновляется повторным импортом.</p></details>
+        </section></div>
+    </section>
+    <footer><span>Аккаунты и общее расписание AI Ping</span><a href="https://github.com/dprytkov/ai-ping" target="_blank" rel="noreferrer">Проект ai-ping</a></footer>
+  </main>
+</body>
+</html>

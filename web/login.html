@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Вход · AI Ping</title>
+  <link rel="stylesheet" href="app.css">
+  <script src="login.js" defer></script>
+</head>
+<body class="login-page">
+  <main class="login-main">
+    <header><a class="brand" href="./">AI Ping<span class="pulse" aria-hidden="true"></span></a></header>
+    <section class="login-section" aria-labelledby="login-title">
+      <h1 id="login-title">Войти в AI Ping</h1>
+      <p class="login-intro">Введите логин и пароль панели, чтобы запускать проверки Claude и Codex.</p>
+      <form id="login-form">
+        <div class="model-field"><label for="username">Логин</label><input id="username" name="username" value="ai-ping" autocomplete="username" maxlength="100" required></div>
+        <div class="model-field"><label for="password">Пароль</label><input id="password" name="password" type="password" autocomplete="current-password" maxlength="256" required></div>
+        <div id="login-error" class="error" role="alert" hidden></div>
+        <button id="login-button" type="submit">Войти</button>
+      </form>
+    </section>
+  </main>
+</body>
+</html>

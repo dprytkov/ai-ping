@@ -1,0 +1,38 @@
+[Unit]
+Description=AI Ping private web interface
+After=network-online.target nginx.service
+Wants=network-online.target
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+[Service]
+Type=simple
+User=ai-ping-web
+Group=ai-ping-web
+WorkingDirectory=/opt/ai-ping-web
+EnvironmentFile=/etc/ai-ping-web/service.env
+Environment=PYTHONDONTWRITEBYTECODE=1 TZ=Europe/Moscow
+ExecStart=/usr/bin/python3 /opt/ai-ping-web/server.py
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=10
+UMask=0077
+MemoryHigh=64M
+MemoryMax=96M
+CPUQuota=20%
+TasksMax=24
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/root/.local/state/ai-ping
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+RestrictSUIDSGID=true
+LockPersonality=true
+LimitCORE=0
+# NoNewPrivileges would block the deliberately narrow sudo runner.
+
+[Install]
+WantedBy=multi-user.target

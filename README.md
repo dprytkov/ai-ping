@@ -123,6 +123,18 @@ Return to the Linux setup prompt, paste with **Ctrl+Shift+V** or right-click, an
 
 AI Ping saves only the access token, Claude permission scopes when available, and Codex account/identity fields under `~/.local/state/ai-ping/credentials/` with file mode `600` and directory mode `700`. It does not overwrite CLI profiles or save refresh tokens. Treat this text like a password; do not share it or put it in a command argument. Clear the Windows clipboard afterward with `Set-Clipboard -Value ''`. Without a CLI, pings use direct HTTP requests; imported tokens are not refreshed automatically. On HTTP 401, create fresh authorization on Windows and repeat setup: use `claude setup-token` again for a long-lived Claude token. Claude's email is `login=unavailable` without its CLI. A token pasted as a plain string is treated as the inference-only token from `setup-token`, so quota lookup is skipped; login JSON with broader or unknown scopes still requests quota statistics. This applies to manual and scheduled pings, and unavailable limits do not turn a successful ping into a failure. Direct Claude requests support `haiku`, `sonnet`, `opus`, or a full API model ID, with tools and thinking disabled.
 
+## Web panel
+
+The optional [web panel](web/README.md) provides manual Claude/Codex pings, account selection, Windows authorization import, a shared schedule, and the existing AI Ping log. It uses the installed Linux ping commands and shares their cron lock. Login uses a password form and a session cookie; imported accounts stay outside the schedule until selected. Up to 12 accounts are supported, including two built-in server accounts.
+
+Deploy it separately on an Ubuntu/Debian server with AI Ping installed for root, imported authorization for both providers, an existing cron entry, and an HTTPS Nginx vhost. Ordinary installers do not deploy the panel. From `web` on that server:
+
+```sh
+sudo python3 deploy.py --host panel.example.com --vhost /etc/nginx/sites-enabled/panel.conf
+```
+
+Replace the example domain and vhost path with your own. Deployment backs up changed files, preserves existing panel accounts/settings, and checks HTTPS login without making model requests. First deployment starts with **06:00, 11:01, 16:02, 21:03 Europe/Moscow**; change the times, models and participants in the panel. Its settings then control the schedule. After updating the base Linux installation, redeploy the panel to restore its cron wrapper. See the [panel guide](web/README.md) for requirements, Windows import, storage and rollback.
+
 ## Windows requirements
 
 - Windows with **Windows PowerShell 5.1** and an internet connection.
@@ -231,6 +243,14 @@ Linux checks use isolated homes, mocked crontab/CLI commands, local archives, an
 ```bash
 python3 test-linux.py
 bash test-linux.sh
+```
+
+Web panel offline checks (Linux):
+
+```sh
+cd web
+python3 -m unittest -v test_web.py test_profiles.py test_deploy.py
+sh -n ai-ping-run.sh
 ```
 
 [Report a problem](https://github.com/dprytkov/ai-ping/issues) with the command, Windows/CLI versions, and sanitized output. Redact your login email before sharing logs.

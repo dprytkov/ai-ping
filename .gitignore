@@ -17,6 +17,13 @@ auth.json
 credentials.json
 .credentials.json
 **/ai-ping/credentials/
+# Web deployment state and credentials are local, never source files.
+web/access.json
+web/service.env
+web/settings.json
+web/accounts.json
+web/accounts/
+web/backups/
 .codex/
 .claude/
 .claude-*-backup/
