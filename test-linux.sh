@@ -30,7 +30,7 @@ for name in ai-ping-setup.sh install.sh claude-ping.sh codex-ping.sh ai-ping.sh;
     bash -n "$source_directory/$name"
 done
 cp -- "$source_directory/ai-ping-setup.sh" "$source_directory/claude-ping.sh" \
-    "$source_directory/codex-ping.sh" "$source_directory/ai-ping.sh" "$source_directory/ai-ping.py" "$source_directory/LICENSE" \
+    "$source_directory/codex-ping.sh" "$source_directory/ai-ping.sh" "$source_directory/ai-ping.py" "$source_directory/codex_auth.py" "$source_directory/LICENSE" \
     "$test_root/fixture/ai-ping-main/"
 cat >"$test_root/bin/crontab" <<'MOCK'
 #!/usr/bin/env bash
@@ -44,11 +44,11 @@ fi
 MOCK
 cat >"$test_root/bin/python3" <<'MOCK'
 #!/usr/bin/env bash
-[[ ($# = 2 || $# = 3) && -f $1 && $1 = */ai-ping.py ]] || exit 91
+[[ ($# = 2 || $# = 3 || $# = 4) && -f $1 && $1 = */ai-ping.py ]] || exit 91
 if [[ $# = 2 ]]; then
     case "$2" in codex) set -- "$@" gpt-5.6-luna ;; claude) set -- "$@" haiku ;; *) exit 91 ;; esac
 fi
-if [[ $2 = --setup-auth ]]; then
+if [[ $2 = --setup-linux ]]; then
     [[ $3 = both || $3 = claude || $3 = codex ]] || exit 91
     if [[ ${TEST_AUTH_FAILURE:-0} = 1 ]]; then echo 'FAIL: offline authorization failure' >&2; exit 1; fi
     exit 0
@@ -94,7 +94,7 @@ assert_contains "$TEST_CRONTAB" '* * * * * /bin/bash '
 assert_contains "$TEST_CRONTAB" ' --scheduled'
 assert_contains "$HOME/.local/bin/ai-ping-run" 'export TZ=Europe/Moscow'
 assert_contains "$TEST_CRONTAB" '15 3 * * * echo unrelated'
-for name in claude-ping codex-ping ai-ping ai-ping.py ai-ping-run ai-ping-LICENSE.txt; do
+for name in claude-ping codex-ping ai-ping ai-ping.py codex_auth.py ai-ping-run ai-ping-LICENSE.txt; do
     [[ -f $HOME/.local/bin/$name ]] || fail "Missing installed file: $name"
 done
 cmp "$source_directory/claude-ping.sh" "$HOME/.local/bin/claude-ping"

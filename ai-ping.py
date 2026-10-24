@@ -17,6 +17,7 @@ import tempfile
 import urllib.error
 import urllib.request
 import warnings
+import codex_auth
 
 
 class PingError(Exception):
@@ -32,6 +33,8 @@ def read_json(path):
 
 
 def auth_path(provider):
+    if provider == "codex" and codex_auth.active():
+        return codex_auth.auth_path()
     imported = imported_auth_path(provider)
     if not shutil.which(provider) and imported.is_file():
         return imported
@@ -309,6 +312,9 @@ def codex_headers(tokens):
 
 
 def codex_ping(model):
+    managed = codex_auth.active()
+    if managed:
+        codex_auth.ensure_fresh()
     headers = dict(codex_headers(codex_tokens()), Accept="text/event-stream")
     body = {
         "model": model, "instructions": "You are Codex.",
@@ -321,11 +327,17 @@ def codex_ping(model):
         output = request("https://chatgpt.com/backend-api/codex/responses", headers, body, 60)
     except urllib.error.HTTPError as error:
         if error.code == 401:
-            if not shutil.which("codex"):
-                raise PingError("Codex token expired (HTTP 401); sign in on Windows and re-run ai-ping-setup.sh to paste fresh authorization") from None
-            print("Token expired (HTTP 401).")
-            return codex_cli_ping(model)
-        raise PingError(f"HTTP {error.code}") from None
+            if managed:
+                codex_auth.ensure_fresh(force=True)
+                headers = dict(codex_headers(codex_tokens()), Accept="text/event-stream")
+                output = request("https://chatgpt.com/backend-api/codex/responses", headers, body, 60)
+            else:
+                if not shutil.which("codex"):
+                    raise PingError("Codex token expired (HTTP 401); run ai-ping-setup.sh for a server login") from None
+                print("Token expired (HTTP 401).")
+                return codex_cli_ping(model)
+        else:
+            raise PingError(f"HTTP {error.code}") from None
     answer, usage = "", None
     for line in output.splitlines():
         if not line.startswith("data:"):
@@ -456,6 +468,28 @@ def write_limits(provider):
 
 
 def main(arguments):
+    if arguments == ["--codex-login"] or (len(arguments) == 3 and arguments[0] == "--setup-linux"
+            and arguments[1] in ("both", "claude", "codex")):
+        try:
+            if arguments == ["--codex-login"]:
+                codex_auth.setup(relogin=True)
+                return main(["codex"])
+            provider, model = arguments[1:]
+            if not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9._:/\[\]-]*", model):
+                raise PingError("invalid model name")
+            if provider in ("both", "claude"):
+                setup_authorization("claude")
+            if provider in ("both", "codex"):
+                new_login = codex_auth.setup()
+                codex_auth.ensure_fresh()
+                if new_login:
+                    return main(["codex", model])
+            return 0
+        except (PingError, codex_auth.AuthError) as error:
+            print(f"FAIL: {error}", file=sys.stderr)
+        except (OSError, ValueError, KeyError, TypeError, subprocess.TimeoutExpired):
+            print("FAIL: server login setup failed; retry setup", file=sys.stderr)
+        return 1
     if len(arguments) == 2 and arguments[0] == "--setup-auth" and arguments[1] in ("both", "claude", "codex"):
         try:
             return setup_authorization(arguments[1])
@@ -483,7 +517,7 @@ def main(arguments):
         # Reload credentials here: a CLI may have refreshed them during the ping.
         write_limits(provider)
         return 0
-    except PingError as error:
+    except (PingError, codex_auth.AuthError) as error:
         print(f"FAIL: {error}", file=sys.stderr)
     except subprocess.TimeoutExpired:
         print("FAIL: CLI timed out", file=sys.stderr)

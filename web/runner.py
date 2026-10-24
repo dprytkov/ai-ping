@@ -33,7 +33,7 @@ def status():
         'schedule': settings['times'], 'timezone': settings['timezone'],
         'settings': settings, 'accounts': store.accounts(), 'next_run': store.next_run(),
         'providers': {p: {'installed': (BIN / (p + '-ping')).is_file(),
-                         'authorized': (STATE / 'credentials' / (p + '.json')).is_file()}
+                         'authorized': store.credential_path('server-' + p, p).is_file()}
                       for p in ('claude', 'codex')},
     }
 
@@ -82,18 +82,20 @@ def run_commands(commands, store, source='WEB', slot=None):
                 env = {'HOME': home, 'TZ': settings['timezone'], 'LANG': 'C.UTF-8',
                        'PATH': '/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'}
                 heading = '=== ' + name + '-ping ' + model + ' · ' + account['name'] + ' ===\n'
+                timeout = 220 if (name == 'codex'
+                                  and (Path(home) / '.local/state/ai-ping/codex/auth.json').is_file()) else 100
                 try:
                     result = subprocess.run(
                         ['/bin/bash', str(BIN / (name + '-ping')), model],
                         env=env, cwd='/tmp', stdin=subprocess.DEVNULL,
                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                        text=True, encoding='utf-8', errors='replace', timeout=100,
+                        text=True, encoding='utf-8', errors='replace', timeout=timeout,
                         check=False)
                     text = result.stdout[:MAX_LOG]
                     if result.returncode:
                         code = 1
                 except subprocess.TimeoutExpired:
-                    text, code = 'FAIL: превышено время ожидания (100 секунд).\n', 1
+                    text, code = f'FAIL: превышено время ожидания ({timeout} секунд).\n', 1
                 except OSError:
                     text, code = 'FAIL: не удалось запустить установленную команду.\n', 1
                 output.append(heading + text)

@@ -149,6 +149,20 @@ class ProfileTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             store.normalize_authorization(directory, 'codex', {'tokens': {'access_token': 'sk-api-fixture'}})
 
+    def test_server_uses_single_managed_auth_file_and_live_metadata(self):
+        path = self.state / 'codex/auth.json'
+        path.parent.mkdir()
+        payload = base64.urlsafe_b64encode(json.dumps({'exp': 2000000000}).encode()).decode().rstrip('=')
+        path.write_text(json.dumps({'tokens': {'access_token': 'x.'+payload+'.x', 'refresh_token': 'secret'}}))
+        self.repo.atomic(self.repo.root / 'accounts.json', [{'id': 'server-codex', 'provider': 'codex',
+                         'name': 'Server', 'expires_at': 1000000000}])
+        self.assertEqual(self.repo.credential_path('server-codex', 'codex'), path)
+        self.assertEqual(self.repo.account('server-codex')['expires_at'], 2000000000)
+        with self.assertRaises(ValueError):
+            self.repo.import_account({'provider': 'codex', 'id': 'server-codex', 'name': 'Server',
+                                      'authorization': {'tokens': {'access_token': 'replacement'}}})
+        self.assertIn('secret', path.read_text())
+
 
 if __name__ == '__main__':
     unittest.main()

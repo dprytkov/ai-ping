@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import re
 import secrets
+import sys
 import tempfile
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -20,7 +21,11 @@ def normalize_authorization(binary_dir, provider, value):
     # Reuse the installed ai-ping importer: it strips refresh tokens/API keys.
     spec = importlib.util.spec_from_file_location('installed_ai_ping', binary_dir / 'ai-ping.py')
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    sys.path.insert(0, str(binary_dir))
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        sys.path.pop(0)
     try:
         return module.authorization_data(provider, value)
     except (ValueError, TypeError, KeyError, AttributeError):
@@ -95,6 +100,9 @@ class Store:
         if identifier.startswith('server-'):
             if identifier != 'server-' + provider:
                 raise ValueError('Аккаунт относится к другому сервису.')
+            managed = self.state / 'codex/auth.json'
+            if provider == 'codex' and managed.is_file():
+                return managed
             return self.state / 'credentials' / (provider + '.json')
         return self.root / 'accounts' / identifier / '.local/state/ai-ping/credentials' / (provider + '.json')
 
@@ -113,7 +121,8 @@ class Store:
             try:
                 value = read_json(path, {})
                 metadata = display_metadata(provider, value)
-                metadata.update({k: entry[k] for k in ('email', 'expires_at') if entry.get(k) is not None})
+                if not (identifier == 'server-codex' and path == self.state / 'codex/auth.json'):
+                    metadata.update({k: entry[k] for k in ('email', 'expires_at') if entry.get(k) is not None})
                 scopes = (value.get('claudeAiOauth') or {}).get('scopes', [])
                 if not isinstance(scopes, list) or not all(isinstance(s, str) for s in scopes):
                     scopes = []
@@ -185,6 +194,8 @@ class Store:
             if not isinstance(identifier, str) or not ACCOUNT_ID.fullmatch(identifier):
                 raise ValueError('Некорректный аккаунт.')
             self.account(identifier, provider)
+            if identifier == 'server-codex' and (self.state / 'codex/auth.json').is_file():
+                raise ValueError('Серверный Codex использует отдельную сессию. Для повторного входа выполните python3 ~/.local/bin/ai-ping.py --codex-login на сервере.')
         else:
             if len(self.accounts()) >= MAX_ACCOUNTS:
                 raise ValueError('Достигнут предел: 12 аккаунтов.')

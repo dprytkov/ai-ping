@@ -383,15 +383,23 @@ fi
                            TMPDIR=str(self.directory), AI_PING_TEST_CRON=str(cron), PYTHONDONTWRITEBYTECODE="1")
         for name in ("SUDO_USER", "CLAUDE_CONFIG_DIR", "CODEX_HOME"):
             environment.pop(name, None)
-        values = [("claude", {"claudeAiOauth": {"accessToken": "offline-terminal-claude-secret"}}),
-                  ("codex", {"tokens": {"access_token": "offline-terminal-codex-secret-" + "x" * 9000,
-                                        "account_id": "offline-account"}})]
+        values = [("claude", {"claudeAiOauth": {"accessToken": "offline-terminal-claude-secret-" + "x" * 9000}})]
+        # A pre-existing dedicated session makes repeated setup fully offline.
+        managed_home = home / '.local/state/ai-ping/codex'
+        managed_home.mkdir(parents=True)
+        payload = base64.urlsafe_b64encode(json.dumps({'exp': time.time()+86400}).encode()).decode().rstrip('=')
+        managed_home.joinpath('auth.json').write_text(json.dumps({'tokens': {
+            'access_token': 'x.'+payload+'.x', 'refresh_token': 'fixture-refresh', 'account_id': 'fixture'}}))
+        managed_binary = home / '.local/lib/ai-ping/codex'
+        managed_binary.parent.mkdir(parents=True)
+        managed_binary.write_text('#!/bin/sh\nexit 92\n')
+        managed_binary.chmod(0o755)
         prompts = [(name + " authorization: ", json.dumps(value), True) for name, value in values]
         arguments = ["bash", str(ROOT / "ai-ping-setup.sh"), "--start", "07:30", "--provider", "both"]
         if use_pipe:
             archive = self.directory / "fixture.tar.gz"
             with tarfile.open(archive, "w:gz") as fixture:
-                for name in ("ai-ping-setup.sh", "claude-ping.sh", "codex-ping.sh", "ai-ping.sh", "ai-ping.py", "LICENSE"):
+                for name in ("ai-ping-setup.sh", "claude-ping.sh", "codex-ping.sh", "ai-ping.sh", "ai-ping.py", "codex_auth.py", "LICENSE"):
                     fixture.add(ROOT / name, arcname="ai-ping-main/" + name)
             curl = binaries / "curl"
             curl.write_text('''#!/bin/bash
@@ -506,7 +514,7 @@ cp -- "$AI_PING_TEST_ARCHIVE" "$target"
                     urllib.error.HTTPError("offline", 401, "secret body", {}, None)))
             self.assertEqual(code, 1)
             self.assertIn("HTTP 401", output)
-            self.assertIn("Windows", output)
+            self.assertIn("Windows" if provider == "claude" else "server login", output)
             self.assertIn("ai-ping-setup.sh", output)
             self.assertNotIn("secret body", output)
             cli.assert_not_called()

@@ -70,7 +70,7 @@ for ((minute=first_minute; minute<=23*60; minute+=5*60+1)); do
 done
 
 source_directory=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-for name in claude-ping.sh codex-ping.sh ai-ping.sh ai-ping.py LICENSE; do
+for name in claude-ping.sh codex-ping.sh ai-ping.sh ai-ping.py codex_auth.py LICENSE; do
     [[ -f $source_directory/$name ]] || fail "Missing source file: $name"
 done
 temporary_directory=$(mktemp -d)
@@ -90,7 +90,7 @@ awk '
 
 # Collect missing-CLI authorization before installing files or changing cron.
 # Credentials are read privately by Python, never passed as shell arguments.
-python3 "$source_directory/ai-ping.py" --setup-auth "$provider" || fail 'Authorization setup failed; schedule was not changed.'
+python3 "$source_directory/ai-ping.py" --setup-linux "$provider" "$codex_model" || fail 'Authorization setup failed; schedule was not changed.'
 
 target_directory=$HOME/.local/bin
 state_directory=$HOME/.local/state/ai-ping
@@ -99,6 +99,7 @@ install -m 755 -- "$source_directory/claude-ping.sh" "$target_directory/claude-p
 install -m 755 -- "$source_directory/codex-ping.sh" "$target_directory/codex-ping"
 install -m 755 -- "$source_directory/ai-ping.sh" "$target_directory/ai-ping"
 install -m 644 -- "$source_directory/ai-ping.py" "$target_directory/ai-ping.py"
+install -m 644 -- "$source_directory/codex_auth.py" "$target_directory/codex_auth.py"
 install -m 644 -- "$source_directory/LICENSE" "$target_directory/ai-ping-LICENSE.txt"
 
 # Store paths and models, never credentials. Cron does not load shell profiles.
@@ -165,5 +166,5 @@ printf 'Daily schedule (%s): %s\n' "$schedule_timezone" "${times[*]}"
 printf 'Provider: %s\nLog: %s/ai-ping.log\n' "$provider" "$state_directory"
 printf 'Check that your cron daemon is running (cron or crond, depending on the distribution).\n'
 printf 'Open a new Bash terminal, or run: export PATH="$HOME/.local/bin:$PATH"\n'
-printf 'With installed CLIs, sign in beforehand: claude then /login; codex login.\n'
-printf 'Installation sends no model requests. Re-run to update scripts or schedule.\n'
+printf 'Codex uses its dedicated server login and refreshes before pings when needed.\n'
+printf 'A new Codex login sends one verification ping. Repeat setup reuses the session.\n'
