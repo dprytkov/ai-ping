@@ -43,6 +43,13 @@ public class MockClaude {
             Environment.GetEnvironmentVariable("TEMP").TrimEnd('\\'), StringComparison.OrdinalIgnoreCase)) return 93;
         if (Environment.GetEnvironmentVariable("MAX_THINKING_TOKENS") != "0" ||
             Environment.GetEnvironmentVariable("CLAUDE_CODE_EFFORT_LEVEL") != "low") return 94;
+        if (scenario == "auth-failure-json" || scenario == "auth-failure-zero") {
+            Console.WriteLine("{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":true,\"result\":\"Failed to authenticate: OAuth session expired and could not be refreshed\"}");
+            return scenario == "auth-failure-zero" ? 0 : 1;
+        }
+        if (scenario == "auth-failure-stderr") {
+            Console.Error.WriteLine("Not logged in. Please run /login. Bearer auth-status-secret"); return 1;
+        }
         if (scenario == "cli-failure" || scenario == "cli-failure-full-quota" || scenario == "no-login") return 7;
         if (scenario.StartsWith("rate-limit") || scenario == "weekly-rate-limit") {
             if (scenario == "rate-limit-refresh") {
@@ -187,6 +194,16 @@ try {
     Test-Ping 'Partial token counts are not invented' 'partial-token-counts' -Contains @('input=20', 'cache_write=n/a', 'cached=n/a', 'output=3', 'total=n/a')
     foreach ($scenario in @('missing-auth', 'invalid-auth', 'missing-token', 'network-error', 'invalid-usage')) {
         Test-Ping "Usage warning: $scenario" $scenario -Contains @("OK: 'ok'", 'model=haiku', 'WARN: limits unavailable')
+    }
+    foreach ($scenario in @('missing-auth', 'missing-token')) {
+        Test-Ping "Missing OAuth token: $scenario" $scenario -Contains @(
+            "OK: 'ok'", 'WARN: limits unavailable (Claude OAuth token missing; run claude auth login).') `
+            -Absent @('network, authentication or response error')
+    }
+    foreach ($scenario in @('auth-failure-json', 'auth-failure-zero', 'auth-failure-stderr')) {
+        Test-Ping "Authentication failure: $scenario" $scenario -ExitCode 1 -Contains @(
+            'FAIL: Claude authentication failed. Run: claude auth login', 'weekly') `
+            -Absent @('exit code', 'OK:', 'TOKENS', 'LIMIT:', 'WARN:')
     }
     Test-Ping 'Usage HTTP 401' 'http-401' -Contains @("OK: 'ok'", 'model=haiku', 'WARN: limits unavailable (HTTP 401)')
     Test-Ping 'Usage HTTP 429' 'http-429' -Contains @("OK: 'ok'", 'model=haiku', 'WARN: limits unavailable (HTTP 429)')

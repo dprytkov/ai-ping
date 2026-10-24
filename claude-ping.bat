@@ -25,6 +25,9 @@ function Write-PingFailure {
     # Recognize subscription exhaustion without treating every CLI error as a limit.
     if ($Details -match '(?i)(?:hit|reached) your (?:usage |session |weekly )?limit|usage_limit_reached|(?:usage|quota) limit (?:has been )?(?:reached|exceeded)|quota (?:exceeded|exhausted)') {
         Write-Host 'LIMIT: quota exhausted. Try again after reset.' -ForegroundColor Yellow
+    } elseif ($Details -match '(?i)failed to authenticate|not logged in|authentication_error|(?:please|must) (?:run|use) /login') {
+        # Classify known failures without exposing raw CLI output or credentials.
+        Write-Host 'FAIL: Claude authentication failed. Run: claude auth login' -ForegroundColor Red
     } else {
         Write-Host $Fallback -ForegroundColor Red
     }
@@ -141,9 +144,16 @@ function Write-AccountUsage {
             Join-Path $env:USERPROFILE '.claude'
         }
         $authFile = Join-Path $configDirectory '.credentials.json'
+        if (-not (Test-Path -LiteralPath $authFile -PathType Leaf)) {
+            Write-Host 'WARN: limits unavailable (Claude OAuth token missing; run claude auth login).' -ForegroundColor Yellow
+            return
+        }
         $oauth = (Get-Content -LiteralPath $authFile -Raw -ErrorAction Stop |
             ConvertFrom-Json -ErrorAction Stop).claudeAiOauth
-        if (-not $oauth.accessToken) { throw 'No Claude OAuth token' }
+        if (-not $oauth.accessToken) {
+            Write-Host 'WARN: limits unavailable (Claude OAuth token missing; run claude auth login).' -ForegroundColor Yellow
+            return
+        }
         $headers = @{
             'Authorization' = 'Bearer ' + $oauth.accessToken
             'anthropic-beta' = 'oauth-2025-04-20'

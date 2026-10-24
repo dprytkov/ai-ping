@@ -144,6 +144,8 @@ Replace the example domain and vhost path with your own. Deployment backs up cha
 
 **Sign in:** run `claude` and use `/login`, or run `codex login`. Installers do not install the CLIs or sign you in; Linux setup can import Windows authorization when a CLI is missing. The Windows installer does not create scheduled tasks; Linux setup creates the cron schedule described above.
 
+On Windows, `FAIL: Claude authentication failed` means you need to run `claude auth login` and complete sign-in in your browser, then retry `claude-ping`. A missing OAuth token for quota lookup is reported separately; reinstalling AI Ping does not restore a Claude session.
+
 ## Usage
 
 Run `ai-ping` without arguments to ping Codex, then Claude, with their default models on Windows or Linux. Both are attempted even if one fails. It exits with `0` only when both succeed; otherwise `1`. Use the individual commands below to choose a model.
